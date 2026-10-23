@@ -29,7 +29,7 @@ front of you**. You can watch every step, stop it, or click around yourself.
 └──────────────────────┴──────────────────────────────────────────┘
 ```
 
-**Website:** https://arshu.github.io/ArshuLauncher/
+**Website:** https://launcher.arshucs.com/
 
 ## Who is it for?
 
