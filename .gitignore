@@ -1,0 +1,5 @@
+# What the launcher writes when you try it out in this folder
+runJointLauncher.json
+.claude/
+.agents/
+.pi/
