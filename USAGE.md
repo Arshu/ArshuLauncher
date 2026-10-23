@@ -86,7 +86,7 @@ Windows 11 already has it. On Windows 10: `winget install --id Microsoft.Windows
 ## Step 2: Download the launcher
 
 1. Make a folder for your work, for example `Documents\AIWork` (Windows) or `Documents/AIWork` (Mac/Linux).
-2. Download **[runJointLauncher.cs](https://raw.githubusercontent.com/Srid68/ArshuLauncher/main/runJointLauncher.cs)**
+2. Download **[runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs)**
    into that folder. (In the browser: right-click the link → **Save link as…**, and keep the name
    `runJointLauncher.cs`.)
 
@@ -94,8 +94,8 @@ Or download it straight from the terminal. First go into your folder, then downl
 
 | Computer | Commands |
 |---|---|
-| Windows | `cd $HOME\Documents\AIWork` then `irm https://raw.githubusercontent.com/Srid68/ArshuLauncher/main/runJointLauncher.cs -OutFile runJointLauncher.cs` |
-| Mac / Linux | `cd ~/Documents/AIWork` then `curl -fsSLO https://raw.githubusercontent.com/Srid68/ArshuLauncher/main/runJointLauncher.cs` |
+| Windows | `cd $HOME\Documents\AIWork` then `irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs -OutFile runJointLauncher.cs` |
+| Mac / Linux | `cd ~/Documents/AIWork` then `curl -fsSLO https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs` |
 
 > If the folder doesn't exist yet, create it first: `mkdir $HOME\Documents\AIWork` (Windows) or
 > `mkdir -p ~/Documents/AIWork` (Mac/Linux).
