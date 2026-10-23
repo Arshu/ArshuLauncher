@@ -22,7 +22,9 @@ using System.Threading;
 /// skill's own arguments).
 ///
 /// Self-contained and repository-independent: copy this one file into any folder (a repository or not) on Windows,
-/// macOS or Linux and run it from there with .NET 10+. It needs no package. It carries the skills joint-launcher,
+/// macOS or Linux and run it from there with .NET 10+. It needs no package. runJointBuild.cs compiles it to the
+/// NativeAOT single file runJointLauncher-&lt;os&gt;-&lt;arch&gt; (e.g. runJointLauncher-win-x64.exe), which runs the
+/// same way without .NET; the help, the doctor and the skills name whichever was run (LaunchCommand). It carries the skills joint-launcher,
 /// joint-browser (Playwright on the shared browser), joint-launcher-install and joint-launcher-doctor (EmbeddedSkills) and writes them to the harness's skills folder
 /// there when missing, never over a copy already there; other skills are named in runJointLauncher.json with their
 /// SKILL.md path. Launching checks, in order: the harness is supported and installed (else it says how to install it
@@ -40,7 +42,7 @@ using System.Threading;
 /// (Terminal.app through AppleScript, the browser placed by its window flags) and Linux (gnome-terminal, konsole,
 /// xfce4-terminal or xterm; on X11 both windows are placed through libX11, on Wayland both open unplaced).
 ///
-/// Usage: dotnet run runJointLauncher.cs -- [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
+/// Usage: dotnet run runJointLauncher.cs -- (or runJointLauncher-&lt;os&gt;-&lt;arch&gt;) [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
 ///        [--position left:right|right:left|top:bottom|bottom:top] [--ratio 1:4]
 /// </summary>
 class RunJointLauncher
@@ -50,6 +52,8 @@ class RunJointLauncher
     private const string ChromeWindowClass = "Chrome_WidgetWin_1";
     private const string DefaultsFileName = "runJointLauncher.json";
     private const string LauncherFileName = "runJointLauncher.cs";
+    // Run from source, the SDK sets EntryPointFilePath; the published single-file binary (runJointBuild.cs) has none.
+    private static readonly bool FromSource = AppContext.GetData("EntryPointFilePath") is string;
     private static readonly TimeSpan WindowWait = TimeSpan.FromSeconds(30);
     // terminal:browser placement; the first named side is the terminal's.
     private static readonly string[] Positions = { "left:right", "right:left", "top:bottom", "bottom:top" };
@@ -645,6 +649,20 @@ class RunJointLauncher
     static string ShQuote(string text) => "'" + text.Replace("'", "'\\''") + "'";
 
     /// <summary>
+    /// The command that runs this launcher with the given arguments, as the help, the doctor and the embedded skills
+    /// name it: `dotnet run runJointLauncher.cs -- &lt;args&gt;` from source, else the published binary by its path.
+    /// </summary>
+    static string LaunchCommand(string args = "")
+    {
+        string binary = Environment.ProcessPath!;
+        string launcher = FromSource ? $"dotnet run {LauncherFileName}" : binary.Contains(' ') ? $"\"{binary}\"" : binary;
+        return args.Length == 0 ? launcher : FromSource ? $"{launcher} -- {args}" : $"{launcher} {args}";
+    }
+
+    // The embedded skills write {{launch}} and {{launch --doctor}} for the command that runs the launcher.
+    static string LaunchText(string text) => text.Replace("{{launch --doctor}}", LaunchCommand("--doctor")).Replace("{{launch}}", LaunchCommand());
+
+    /// <summary>
     /// Opens a Terminal.app window running the harness on the skill prompt in the workspace, titled and placed through
     /// AppleScript (Terminal's bounds are points, as the work area). macOS asks once to let the calling terminal
     /// control Terminal.
@@ -736,7 +754,7 @@ class RunJointLauncher
         string os = isWindows ? "Windows" : isMac ? "macOS" : isLinux ? "Linux" : RuntimeInformation.OSDescription;
         Console.WriteLine($"runJointLauncher doctor ({os}, {RuntimeInformation.OSArchitecture}, .NET {Environment.Version}) in {workspaceDir}");
         Check(isWindows || isMac || isLinux, $"platform {os}", "use Windows, macOS or Linux");
-        Check(Environment.Version.Major >= 10, $".NET {Environment.Version} runs file-based apps (dotnet run file.cs)", "install the .NET 10 SDK or later: https://dotnet.microsoft.com/download");
+        if (FromSource) Check(Environment.Version.Major >= 10, $".NET {Environment.Version} runs file-based apps (dotnet run file.cs)", "install the .NET 10 SDK or later: https://dotnet.microsoft.com/download");
         JointDefaults? defaults = ReadDefaults(defaultsFile, out string defaultsError);
         Check(defaults != null, File.Exists(defaultsFile) ? $"{DefaultsFileName} readable" : $"{DefaultsFileName} (created on the first session)", defaultsError.Replace("Error: ", ""));
         harnessName ??= defaults?.DefaultHarness ?? "";
@@ -784,7 +802,7 @@ class RunJointLauncher
         string? playwright = PlaywrightPackage(workspaceDir);
         Check(playwright != null, playwright != null ? $"Playwright ({playwright})" : "Playwright (the project's own, or joint-browser's)",
             $"node <harness skills folder>/{BrowserSkill}/browser.mjs setup (playwright-core into ~/.joint-browser/node), or npm install -D playwright in the project", required: false);
-        Console.WriteLine(missing == 0 ? $"Ready: dotnet run {LauncherFileName}" : $"{missing} required item(s) missing; fix them and run --doctor again.");
+        Console.WriteLine(missing == 0 ? $"Ready: {LaunchCommand()}" : $"{missing} required item(s) missing; fix them and run --doctor again.");
         return missing == 0 ? 0 : 1;
     }
 
@@ -940,7 +958,7 @@ class RunJointLauncher
                 try
                 {
                     Directory.CreateDirectory(dir);
-                    File.WriteAllText(file, text.ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
+                    File.WriteAllText(file, LaunchText(text).ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
@@ -1029,15 +1047,16 @@ class RunJointLauncher
 
     static void PrintUsage()
     {
+        Console.WriteLine($"Usage: {LaunchCommand("[--harness claude|codex|pi] [--skill <name>] [--skillargs \"<skill arguments>\"]")}");
+        Console.WriteLine("           [--position <terminal:browser>] [--ratio <terminal>:<browser>]");
+        Console.WriteLine($"       {LaunchCommand("--doctor [--harness claude|codex|pi]")}");
         Console.WriteLine("""
-Usage: dotnet run runJointLauncher.cs -- [--harness claude|codex|pi] [--skill <name>] [--skillargs "<skill arguments>"]
-                                         [--position <terminal:browser>] [--ratio <terminal>:<browser>]
-       dotnet run runJointLauncher.cs -- --doctor [--harness claude|codex|pi]
 
 Opens a joint session and exits: a terminal running an AI harness and a shared Chromium-based browser (DevTools
 protocol on 127.0.0.1:9222) splitting the primary monitor. Copy this one file into any folder (a repository or not)
-and run it from there, on the desktop (not over ssh), with the .NET 10 SDK or later. It needs nothing else beside it;
-runJointLauncher.json is created there on the first session.
+and run it from there, on the desktop (not over ssh): runJointLauncher.cs with the .NET 10 SDK or later, or the
+single-file binary runJointLauncher-<os>-<arch> (e.g. runJointLauncher-win-x64.exe), which needs no .NET. It needs
+nothing else beside it; runJointLauncher.json is created there on the first session.
 
   --harness <name>       what the terminal starts, for this run only (never saved): claude, codex or pi; required
                          while DefaultHarness in runJointLauncher.json is empty. It must be installed: the launcher
@@ -1627,7 +1646,7 @@ description: Start a joint session by asking the user what to do - load one of t
 
 # joint-launcher
 
-The user opened a joint session with the launcher (`dotnet run runJointLauncher.cs`, run from this folder): this
+The user opened a joint session with the launcher (`{{launch}}`, run from this folder): this
 terminal plus a shared browser whose DevTools protocol answers on http://127.0.0.1:9222. Any browser tool that can
 attach to a running Chromium over CDP (e.g. a Playwright MCP server started with `--cdp-endpoint
 http://127.0.0.1:9222`) acts on the window the user watches. The launcher records the session in
@@ -1665,11 +1684,11 @@ description: Install or update what the joint-session launcher (runJointLauncher
 
 # joint-launcher-install
 
-The joint-session launcher (`runJointLauncher.cs`, run from this folder with `dotnet run runJointLauncher.cs`) opens
+The joint-session launcher (run from this folder with `{{launch}}`) opens
 a terminal running this harness beside a shared Chromium-based browser. When it started you here with the arguments
 `missing <items>`, those items stopped the session from opening (`terminal`, `desktop`, `browser`): start with them.
 
-1. Run `dotnet run runJointLauncher.cs -- --doctor` in this folder and read every `[missing]` and `[optional]` line;
+1. Run `{{launch --doctor}}` in this folder and read every `[missing]` and `[optional]` line;
    each names its fix.
 2. Show the user the list with the install command for each (the doctor prints it; the table below is the same) and
    ask which to install: installs change the machine, so never run one unasked. Before installing Node.js or
@@ -1677,7 +1696,7 @@ a terminal running this harness beside a shared Chromium-based browser. When it 
 3. Run the agreed commands one at a time and report each result. A tool installed by winget, brew or apt is on PATH
    only in NEW terminals: say so.
 4. Run `--doctor` again and report what is now `[ok]` and what is still missing.
-5. Tell the user to exit this harness and run `dotnet run runJointLauncher.cs` again (in a new terminal when PATH
+5. Tell the user to exit this harness and run `{{launch}}` again (in a new terminal when PATH
    changed): the launcher opens the session once nothing is missing.
 
 | Item | Windows | macOS | Linux (Debian/Ubuntu; dnf/pacman elsewhere) |
@@ -1701,10 +1720,10 @@ description: Troubleshoot the joint-session launcher (runJointLauncher.cs) - run
 
 # joint-launcher-doctor
 
-The joint-session launcher (`runJointLauncher.cs`, run from this folder with `dotnet run runJointLauncher.cs`) opens a
+The joint-session launcher (run from this folder with `{{launch}}`) opens a
 terminal running this harness beside a shared browser on DevTools port 127.0.0.1:9222, then exits.
 
-1. Run `dotnet run runJointLauncher.cs -- --doctor` in this folder and explain each line that is not `[ok]` in plain
+1. Run `{{launch --doctor}}` in this folder and explain each line that is not `[ok]` in plain
    words, with its fix.
 2. If the user came here after a failed launch, ask what happened and match it against the known causes:
    - "127.0.0.1:9222 is already in use": a previous session's browser (or another browser started with

@@ -220,26 +220,22 @@
         <h3>Install what you need (once)</h3>
         <p>Run each line. After installing, <b>close the terminal and open a new one</b> so it finds the new programs.</p>
         <div class="need">
-          <div><b>.NET 10</b>runs the launcher</div>
           <div><b>An AI assistant</b>Claude Code shown; Codex or pi work too</div>
           <div><b>A browser</b>Chrome or Edge</div>
           <div><b>Node.js 20+</b>lets the assistant drive the browser</div>
         </div>
         <div data-os-only="windows">
-          <div class="cmd"><pre>winget install --id Microsoft.DotNet.SDK.10 -e</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>irm https://claude.ai/install.ps1 | iex</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>winget install --id OpenJS.NodeJS.LTS -e</pre><button data-copy>Copy</button></div>
           <p class="note">Microsoft Edge is already on Windows. Windows 10: also <code>winget install --id Microsoft.WindowsTerminal -e</code>.</p>
         </div>
         <div data-os-only="mac">
           <p class="note">These use <a href="https://brew.sh">Homebrew</a>; install it first if you don't have it.</p>
-          <div class="cmd"><pre>brew install --cask dotnet-sdk</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>curl -fsSL https://claude.ai/install.sh | bash</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>brew install --cask google-chrome</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>brew install node</pre><button data-copy>Copy</button></div>
         </div>
         <div data-os-only="linux">
-          <div class="cmd"><pre>sudo apt install dotnet-sdk-10.0</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>curl -fsSL https://claude.ai/install.sh | bash</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - &amp;&amp; sudo apt install -y nodejs</pre><button data-copy>Copy</button></div>
           <p class="note">Install Google Chrome from <a href="https://www.google.com/chrome/">google.com/chrome</a> (download the .deb and open it). Ubuntu's own <code>nodejs</code> package is too old, so use the line above.</p>
@@ -252,19 +248,21 @@
         <p>Make a folder for your work, download the launcher into it, and start it:</p>
         <div data-os-only="windows">
           <div class="cmd"><pre>mkdir $HOME\Documents\AIWork; cd $HOME\Documents\AIWork</pre><button data-copy>Copy</button></div>
-          <div class="cmd"><pre>irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs -OutFile runJointLauncher.cs</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe</pre><button data-copy>Copy</button></div>
         </div>
         <div data-os-only="mac">
           <div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork</pre><button data-copy>Copy</button></div>
-          <div class="cmd"><pre>curl -fsSLO https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m | sed s/x86_64/x64/) -o runJointLauncher &amp;&amp; chmod +x runJointLauncher</pre><button data-copy>Copy</button></div>
         </div>
         <div data-os-only="linux">
           <div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork</pre><button data-copy>Copy</button></div>
-          <div class="cmd"><pre>curl -fsSLO https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher &amp;&amp; chmod +x runJointLauncher</pre><button data-copy>Copy</button></div>
         </div>
-        <div class="cmd"><pre>dotnet run runJointLauncher.cs -- --harness claude</pre><button data-copy>Copy</button></div>
+        <div class="cmd"><pre>./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div>
         <p class="note">Two windows open and the assistant asks what you'd like to do. Not sure everything is installed?
-          Run <code>dotnet run runJointLauncher.cs -- --doctor</code> first: it checks and tells you what's missing.
+          Run <code>./runJointLauncher --doctor</code> first: it checks and tells you what's missing.
+          Prefer the source? With .NET 10 installed, <code>dotnet run runJointLauncher.cs -- --harness claude</code> does the same
+          (<a href="https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs">runJointLauncher.cs</a>).
           The full guide is in <a href="https://github.com/Arshu/ArshuLauncher/blob/main/USAGE.md">USAGE.md</a>.</p>
       </div>
     </div>
@@ -349,7 +347,7 @@
     </details>
     <details>
       <summary>Something didn't work. What now?</summary>
-      <p>Run <code>dotnet run runJointLauncher.cs -- --doctor</code>. It names each problem and how to fix it. Most problems come from a terminal opened before an install: open a new one.</p>
+      <p>Run <code>./runJointLauncher --doctor</code>. It names each problem and how to fix it. Most problems come from a terminal opened before an install: open a new one.</p>
     </details>
   </div>
 </section>

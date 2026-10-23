@@ -33,30 +33,18 @@ A **terminal** is a window where you type commands. Each command is one line: ty
 Copy each command into your terminal and press Enter. After installing something, **close the terminal and open a
 new one**, so the new program is found.
 
-### 1a. .NET 10 (runs the launcher)
-
-| Computer | Command |
-|---|---|
-| Windows | `winget install --id Microsoft.DotNet.SDK.10 -e` |
-| Mac | `brew install --cask dotnet-sdk` *(needs [Homebrew](https://brew.sh) first)* |
-| Linux (Ubuntu) | `sudo apt install dotnet-sdk-10.0` |
-
-Or download the installer from https://dotnet.microsoft.com/download and double-click it.
-
-Check it worked: `dotnet --version` should print a number starting with **10** (or higher).
-
-### 1b. An AI assistant (pick one)
+### 1a. An AI assistant (pick one)
 
 | Assistant | Windows | Mac / Linux |
 |---|---|---|
 | **Claude Code** | `irm https://claude.ai/install.ps1 \| iex` | `curl -fsSL https://claude.ai/install.sh \| bash` |
-| **Codex** | `npm install -g @openai/codex` *(needs Node.js, see 1d)* | `npm install -g @openai/codex` |
+| **Codex** | `npm install -g @openai/codex` *(needs Node.js, see 1c)* | `npm install -g @openai/codex` |
 | **pi** | `npm install -g @earendil-works/pi-coding-agent` *(needs Node.js)* | same |
 
 Then open a **new** terminal, type the assistant's name (`claude`, `codex` or `pi`) and press Enter **once** to sign
 in. Close it again when you are signed in.
 
-### 1c. A browser
+### 1b. A browser
 
 Any **Chromium-based** browser works:
 
@@ -64,7 +52,7 @@ Any **Chromium-based** browser works:
 - **Mac:** install Google Chrome from https://www.google.com/chrome/ (or `brew install --cask google-chrome`).
 - **Linux:** install Google Chrome from https://www.google.com/chrome/ (download the `.deb` file and open it).
 
-### 1d. Optional: Node.js 20 or newer (lets the assistant drive the browser)
+### 1c. Optional: Node.js 20 or newer (lets the assistant drive the browser)
 
 | Computer | Command |
 |---|---|
@@ -77,7 +65,7 @@ Or download it from https://nodejs.org (choose **LTS**).
 > **Linux note:** Ubuntu's own `sudo apt install nodejs` gives an older version (18) that is too old. Use the command
 > above instead.
 
-### 1e. Windows only: Windows Terminal
+### 1d. Windows only: Windows Terminal
 
 Windows 11 already has it. On Windows 10: `winget install --id Microsoft.WindowsTerminal -e`
 
@@ -85,20 +73,33 @@ Windows 11 already has it. On Windows 10: `winget install --id Microsoft.Windows
 
 ## Step 2: Download the launcher
 
-1. Make a folder for your work, for example `Documents\AIWork` (Windows) or `Documents/AIWork` (Mac/Linux).
-2. Download **[runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs)**
-   into that folder. (In the browser: right-click the link → **Save link as…**, and keep the name
-   `runJointLauncher.cs`.)
+The launcher is **one program file** for your computer, from the
+[latest release](https://github.com/Arshu/ArshuLauncher/releases/latest). It needs nothing else installed.
 
-Or download it straight from the terminal. First go into your folder, then download:
+1. Make a folder for your work, for example `Documents\AIWork` (Windows) or `Documents/AIWork` (Mac/Linux), and go
+   into it in the terminal:
 
-| Computer | Commands |
-|---|---|
-| Windows | `cd $HOME\Documents\AIWork` then `irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs -OutFile runJointLauncher.cs` |
-| Mac / Linux | `cd ~/Documents/AIWork` then `curl -fsSLO https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs` |
+   | Computer | Command |
+   |---|---|
+   | Windows | `mkdir $HOME\Documents\AIWork; cd $HOME\Documents\AIWork` |
+   | Mac / Linux | `mkdir -p ~/Documents/AIWork && cd ~/Documents/AIWork` |
 
-> If the folder doesn't exist yet, create it first: `mkdir $HOME\Documents\AIWork` (Windows) or
-> `mkdir -p ~/Documents/AIWork` (Mac/Linux).
+2. Download the launcher into it, saved as `runJointLauncher` (`runJointLauncher.exe` on Windows):
+
+   | Computer | Command |
+   |---|---|
+   | Windows | `iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe` (Windows on ARM: `runJointLauncher-win-arm64.exe`) |
+   | Mac (Apple silicon or Intel) | `curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m \| sed s/x86_64/x64/) -o runJointLauncher && chmod +x runJointLauncher` |
+   | Linux (x64 or ARM) | `curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m \| sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher && chmod +x runJointLauncher` |
+
+> **Downloaded with the browser instead?** Rename the file to `runJointLauncher` (`runJointLauncher.exe` on
+> Windows) and move it into your folder. On a Mac or Linux, then run `chmod +x runJointLauncher` in the folder; on a
+> Mac also `xattr -d com.apple.quarantine runJointLauncher` (otherwise macOS refuses to open a file from the web).
+
+> **Prefer to run the source?** With **.NET 10** or later installed (`winget install --id Microsoft.DotNet.SDK.10 -e`,
+> `brew install --cask dotnet-sdk` or `sudo apt install dotnet-sdk-10.0`), download
+> [runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs) instead and
+> type `dotnet run runJointLauncher.cs --` wherever this guide says `./runJointLauncher`. It does exactly the same.
 
 ---
 
@@ -108,7 +109,7 @@ Or download it straight from the terminal. First go into your folder, then downl
 2. **Check everything is ready** (this opens nothing, it only checks):
 
    ```
-   dotnet run runJointLauncher.cs -- --doctor
+   ./runJointLauncher --doctor
    ```
 
    Every line should say `[ok]`. A line saying `[missing]` tells you what to install and how. `[optional]` lines
@@ -117,7 +118,7 @@ Or download it straight from the terminal. First go into your folder, then downl
 3. **Start the session** (use your assistant's name):
 
    ```
-   dotnet run runJointLauncher.cs -- --harness claude
+   ./runJointLauncher --harness claude
    ```
 
 The first time takes a little longer. Then **two windows open**: the terminal with your assistant, and the shared
@@ -138,11 +139,11 @@ browser. The assistant asks what you want to do:
 Add `--skill joint-browser` and the assistant starts working in the browser without asking first:
 
 ```
-dotnet run runJointLauncher.cs -- --harness claude --skill joint-browser
+./runJointLauncher --harness claude --skill joint-browser
 ```
 
 The launcher remembers that choice (in the settings file `runJointLauncher.json` it creates in your folder). Running
-`dotnet run runJointLauncher.cs` with nothing after it only shows the help.
+`./runJointLauncher` with nothing after it only shows the help.
 
 ---
 
@@ -176,7 +177,7 @@ You can also click and type in the shared browser yourself at any time.
 | A smaller terminal | `--ratio 1:4` (the terminal gets one fifth) |
 | Half and half | `--ratio 1:1` |
 
-Example: `dotnet run runJointLauncher.cs -- --position bottom:top --ratio 1:3`
+Example: `./runJointLauncher --position bottom:top --ratio 1:3`
 
 The launcher **remembers** your choice for next time.
 
@@ -190,19 +191,21 @@ Close the two windows: the terminal and the shared browser. That's it. Nothing k
 
 ## If something goes wrong
 
-First run the check: `dotnet run runJointLauncher.cs -- --doctor`. It names every problem and how to fix it.
+First run the check: `./runJointLauncher --doctor`. It names every problem and how to fix it.
 
 | You see | What to do |
 |---|---|
-| `dotnet` is not recognized / command not found | .NET isn't installed, or the terminal was opened before you installed it. Install it (Step 1a), then open a **new** terminal. |
-| `claude is not on PATH` (or codex, pi) | install the assistant (Step 1b), then open a **new** terminal. |
+| `runJointLauncher` is not recognized / not found | the terminal is not in the folder you downloaded it to (`cd` into it, Step 2), or you left out the `./` in front. In the old Command Prompt (cmd), type `runJointLauncher` without `./`. |
+| `permission denied` (Mac/Linux) | run `chmod +x runJointLauncher` in your folder. |
+| macOS says the file can't be opened or is from an unidentified developer | run `xattr -d com.apple.quarantine runJointLauncher` in your folder (only needed when it was downloaded with the browser). |
+| `claude is not on PATH` (or codex, pi) | install the assistant (Step 1a), then open a **new** terminal. |
 | `127.0.0.1:9222 is already in use` | a shared browser from an earlier session is still open. Close it and try again. |
 | `no harness` | add `--harness claude` (or codex, pi) to the command. |
 | The assistant started in the **same** terminal instead of opening new windows | something is missing (it says what). Let it help you install it, then close it and run the start command again. |
 | The windows are not side by side (Linux) | your desktop uses **Wayland**, which doesn't let apps arrange windows. Arrange them yourself, or log in with **"Ubuntu on Xorg"**. |
 | The browser opens and closes at once (Ubuntu 23.10 or newer) | install Google Chrome from google.com/chrome, it works best on Ubuntu. |
-| `Node.js 18… is too old` | install Node.js 20 or newer (Step 1d). |
-| Still stuck | start with `dotnet run runJointLauncher.cs -- --skill joint-launcher-doctor` and tell the assistant what happened. |
+| `Node.js 18… is too old` | install Node.js 20 or newer (Step 1c). |
+| Still stuck | start with `./runJointLauncher --skill joint-launcher-doctor` and tell the assistant what happened. |
 
 ---
 
