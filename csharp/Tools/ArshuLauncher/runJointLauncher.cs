@@ -270,12 +270,21 @@ class RunJointLauncher
         string deskDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "joint-launcher");
         string profileDir = Path.Combine(deskDir, "profile");
         string sessionFile = Path.Combine(deskDir, "session.json");
-        // Nothing holds the profile once 9222 is free, so every session starts from an empty one.
-        if (Directory.Exists(profileDir)) Directory.Delete(profileDir, true);
-        Directory.CreateDirectory(profileDir);
-        // Until the harness navigates the window it shows what to do next instead of a blank page.
         string statusPage = Path.Combine(deskDir, "desk.html");
-        File.WriteAllText(statusPage, StatusPage(harness.Name, skillPrompt), new UTF8Encoding(false));
+        try
+        {
+            // Nothing holds the profile once 9222 is free, so every session starts from an empty one.
+            if (Directory.Exists(profileDir)) Directory.Delete(profileDir, true);
+            Directory.CreateDirectory(profileDir);
+            // Until the harness navigates the window it shows what to do next instead of a blank page.
+            File.WriteAllText(statusPage, StatusPage(harness.Name, skillPrompt), new UTF8Encoding(false));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // A browser can hold the profile without answering on 9222: one that lost its DevTools port, or was started without it.
+            Console.WriteLine($"Error: could not prepare the session's browser profile in {deskDir} ({e.Message}); close any browser still using {profileDir} and relaunch.");
+            return 1;
+        }
 
         Rect work = default;
         if (isWindows)
@@ -793,6 +802,19 @@ class RunJointLauncher
         string? browser = FindBrowser(defaults?.Browser ?? InitialDefaults.Browser, out string browserFound);
         Check(browser != null, browser != null ? $"browser {browser} ({browserFound})" : "a Chromium-based browser", browserFound);
         Check(!PortAnswers(CdpPort), $"port {CdpPort} free (no joint session open)", "close the open session's browser window");
+        // The launch's own skill checks on the defaults, once nothing above is missing: Ready means a launch with this
+        // harness and no --skill opens the session (a missing or command-line-unsafe DefaultSkill file refused it).
+        if (chosen != null && defaults != null && missing == 0)
+        {
+            string startSkill = defaults.DefaultSkill.Length == 0 ? ChooserSkill : defaults.DefaultSkill;
+            string? skillFile = SkillFile(workspaceDir, chosen, defaults, startSkill);
+            string? problem = skillFile == null ? $"skill '{startSkill}' is neither embedded ({EmbeddedSkillNames()}) nor configured in Skills of {DefaultsFileName}"
+                : !Array.Exists(EmbeddedSkills, s => s.Name == startSkill) && !File.Exists(skillFile)
+                    ? $"skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {DefaultsFileName}"
+                : SkillPrompt(workspaceDir, chosen, skillFile, startSkill, null, out string promptError) == null ? promptError.Replace("Error: ", "")
+                : null;
+            if (problem != null) Check(false, $"a launch with {chosen.Name} on the defaults", problem);
+        }
         Console.WriteLine("joint-browser (optional: drives the shared browser with Playwright):");
         string? node = FindOnPath(isWindows ? "node.exe" : "node");
         string nodeVersion = node == null ? "" : RunTool(node, new[] { "--version" }, out _).Trim();
@@ -809,7 +831,9 @@ class RunJointLauncher
 
     /// <summary>
     /// The defaults file's values, or the initial defaults when the file does not exist yet. A file that exists but
-    /// lacks a key or holds a value of the wrong kind is an error, not a silent default.
+    /// lacks a key, holds a value of the wrong kind or a value a launch would refuse (DefaultHarness not supported,
+    /// DefaultPosition or DefaultRatio not one, DefaultSkill neither embedded nor in Skills) is an error naming the key,
+    /// not a silent default, so the doctor reports it before a launch would.
     /// </summary>
     static JointDefaults? ReadDefaults(string file, out string error)
     {
@@ -819,6 +843,11 @@ class RunJointLauncher
         try
         {
             using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                error = Fix("is not a JSON object");
+                return null;
+            }
             var values = new Dictionary<string, string>();
             foreach (var key in DefaultsKeys)
             {
@@ -832,6 +861,23 @@ class RunJointLauncher
             if (values["Browser"].Length == 0)
             {
                 error = Fix("has an empty Browser (use \"auto\" or a browser's path)");
+                return null;
+            }
+            string harness = values["DefaultHarness"].ToLowerInvariant();
+            if (harness.Length > 0 && FindHarness(harness) == null)
+            {
+                error = Fix($"has DefaultHarness '{values["DefaultHarness"]}' (use \"\" or one of {HarnessNames()})");
+                return null;
+            }
+            string position = values["DefaultPosition"].ToLowerInvariant();
+            if (Array.IndexOf(Positions, position) < 0)
+            {
+                error = Fix($"has DefaultPosition '{values["DefaultPosition"]}' (use one of {string.Join(", ", Positions)}, terminal:browser)");
+                return null;
+            }
+            if (!ParseRatio(values["DefaultRatio"], out _, out _))
+            {
+                error = Fix($"has DefaultRatio '{values["DefaultRatio"]}' (use <terminal>:<browser> with whole numbers 1-99, e.g. 1:4)");
                 return null;
             }
             if (!doc.RootElement.TryGetProperty("Skills", out var skillsElement) || skillsElement.ValueKind != JsonValueKind.Object)
@@ -850,8 +896,13 @@ class RunJointLauncher
                 }
                 skills[skill.Name] = skill.Value.GetString()!.Trim();
             }
-            return new JointDefaults(values["DefaultHarness"].ToLowerInvariant(), values["DefaultSkill"], values["DefaultPosition"].ToLowerInvariant(), values["DefaultRatio"],
-                skills, values["Browser"]);
+            string defaultSkill = values["DefaultSkill"];
+            if (defaultSkill.Length > 0 && !Array.Exists(EmbeddedSkills, s => s.Name == defaultSkill) && !skills.ContainsKey(defaultSkill))
+            {
+                error = Fix($"has DefaultSkill '{defaultSkill}' (use \"\", an embedded skill ({EmbeddedSkillNames()}) or a name in Skills)");
+                return null;
+            }
+            return new JointDefaults(harness, defaultSkill, position, values["DefaultRatio"], skills, values["Browser"]);
         }
         catch (JsonException e)
         {

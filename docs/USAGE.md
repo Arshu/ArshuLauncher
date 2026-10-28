@@ -207,6 +207,9 @@ First run the check: `./runJointLauncher --doctor`. It names every problem and h
 | macOS says the file can't be opened or is from an unidentified developer | run `xattr -d com.apple.quarantine runJointLauncher` in your folder (only needed when it was downloaded with the browser). |
 | `claude is not on PATH` (or codex, pi) | install the assistant (Step 1a), then open a **new** terminal. |
 | `127.0.0.1:9222 is already in use` | a shared browser from an earlier session is still open. Close it and try again. |
+| `could not prepare the session's browser profile` | a browser from an earlier session still holds the shared browser's profile. Close it and try again. |
+| `runJointLauncher.json has DefaultPosition …` (or `DefaultRatio`, `DefaultHarness`, `DefaultSkill`) | the settings file holds a value the launcher can't use; the message says which values work. Fix it, or delete the file to start over. |
+| `--doctor` says `a launch with claude on the defaults` is missing | the skill named in `DefaultSkill` has no SKILL.md where `Skills` says, or its path holds a character such as `'` or `&`. Fix the path in the settings file. |
 | `no harness` | add `--harness claude` (or codex, pi) to the command. |
 | The assistant started in the **same** terminal instead of opening new windows | something is missing (it says what). Let it help you install it, then close it and run the start command again. |
 | The windows are not side by side (Linux) | your desktop uses **Wayland**, which doesn't let apps arrange windows. Arrange them yourself, or log in with **"Ubuntu on Xorg"**. |
