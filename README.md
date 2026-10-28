@@ -38,7 +38,7 @@ front of you**. You can watch every step, stop it, or click around yourself.
 - Teachers and teams who want to demonstrate an AI assistant working in a real browser.
 
 You don't need to know how to program. You do type a few commands into a terminal once, and
-[USAGE.md](USAGE.md) walks you through every one of them.
+[USAGE.md](docs/USAGE.md) walks you through every one of them.
 
 ## What you need
 
@@ -49,15 +49,15 @@ You don't need to know how to program. You do type a few commands into a termina
 | 3 | A Chromium-based browser: **Chrome** or **Edge** | the shared window (Windows already has Edge) |
 | 4 | *Optional:* **Node.js 20 or newer** | lets the assistant drive the browser |
 
-You only install these once. [USAGE.md](USAGE.md) gives the exact install steps for each one. The launcher itself is
+You only install these once. [USAGE.md](docs/USAGE.md) gives the exact install steps for each one. The launcher itself is
 **one program file** that needs nothing else installed.
 
 ## Get started in 3 steps
 
-1. **Install** the things above (see [USAGE.md → Step 1](USAGE.md#step-1-install-what-you-need)).
+1. **Install** the things above (see [USAGE.md → Step 1](docs/USAGE.md#step-1-install-what-you-need)).
 2. **Download** the launcher for your computer from the
    [latest release](https://github.com/Arshu/ArshuLauncher/releases/latest) into the folder you want to work in
-   (the exact command is in [USAGE.md → Step 2](USAGE.md#step-2-download-the-launcher)):
+   (the exact command is in [USAGE.md → Step 2](docs/USAGE.md#step-2-download-the-launcher)):
 
    | Computer | File |
    |---|---|
@@ -85,9 +85,9 @@ it from the clone's folder.
 
 ## Learn more
 
-- [USAGE.md](USAGE.md): step-by-step guide for Windows, Mac and Linux, what to expect, and fixes for common
+- [USAGE.md](docs/USAGE.md): step-by-step guide for Windows, Mac and Linux, what to expect, and fixes for common
   problems.
-- [FEATURE.md](FEATURE.md): everything it can do, explained simply.
+- [FEATURE.md](docs/FEATURE.md): everything it can do, explained simply.
 - [LICENSE](LICENSE): MIT, free to use, share and change.
 
 ## Is it safe?

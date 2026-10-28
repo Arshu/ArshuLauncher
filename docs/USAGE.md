@@ -97,9 +97,16 @@ The launcher is **one program file** for your computer, from the
 > Mac also `xattr -d com.apple.quarantine runJointLauncher` (otherwise macOS refuses to open a file from the web).
 
 > **Prefer to run the source?** With **.NET 10** or later installed (`winget install --id Microsoft.DotNet.SDK.10 -e`,
-> `brew install --cask dotnet-sdk` or `sudo apt install dotnet-sdk-10.0`), download
-> [runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/csharp/Tools/ArshuLauncher/runJointLauncher.cs) instead and
-> type `dotnet run runJointLauncher.cs --` wherever this guide says `./runJointLauncher`. It does exactly the same.
+> `brew install --cask dotnet-sdk` or `sudo apt install dotnet-sdk-10.0`), any of these does exactly what the program
+> file does: type its command wherever this guide says `./runJointLauncher`. The folder you run it from is the folder
+> the assistant works in, and where the launcher keeps its settings file (`runJointLauncher.json`).
+>
+> | How | Command | The folder you work in |
+> |---|---|---|
+> | Download [runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/csharp/Tools/ArshuLauncher/runJointLauncher.cs) into your folder | `dotnet run runJointLauncher.cs --` | your folder |
+> | Clone this repository (`git clone https://github.com/Arshu/ArshuLauncher.git`), then in the clone | `dotnet run csharp/Tools/ArshuLauncher/runJointLauncher.cs --` | the clone |
+> | The same, with the clone's script | `runJointLauncher.bat` (Windows), `./runJointLauncher.sh` (Linux), `./runJointLauncher.command` or double-click it (Mac) | the clone |
+> | In the clone, from the launcher's own folder (`cd csharp/Tools/ArshuLauncher`) | `dotnet run runJointLauncher.cs --` | `csharp/Tools/ArshuLauncher` |
 
 ---
 

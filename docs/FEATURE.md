@@ -61,7 +61,7 @@ Ask for a **joint review** of a page or a flow, for example *"walk through the s
 
 ## 7. One file, nothing hidden
 
-- The whole launcher is **one file** you can read: [`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs). Each
+- The whole launcher is **one file** you can read: [`runJointLauncher.cs`](../csharp/Tools/ArshuLauncher/runJointLauncher.cs). Each
   [release](https://github.com/Arshu/ArshuLauncher/releases/latest) compiles it into **one program file** per
   computer (Windows, Mac, Linux) that runs without installing anything else; with .NET 10 you can run the source
   itself instead.
