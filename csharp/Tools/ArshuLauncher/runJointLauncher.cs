@@ -42,7 +42,7 @@ using System.Threading;
 /// (Terminal.app through AppleScript, the browser placed by its window flags) and Linux (gnome-terminal, konsole,
 /// xfce4-terminal or xterm; on X11 both windows are placed through libX11, on Wayland both open unplaced).
 ///
-/// Usage: dotnet run runJointLauncher.cs -- (or runJointLauncher-&lt;os&gt;-&lt;arch&gt;) [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
+/// Usage: dotnet run csharp/Tools/ArshuLauncher/runJointLauncher.cs -- (or runJointLauncher-&lt;os&gt;-&lt;arch&gt;) [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
 ///        [--position left:right|right:left|top:bottom|bottom:top] [--ratio 1:4]
 /// </summary>
 class RunJointLauncher
@@ -51,7 +51,8 @@ class RunJointLauncher
     private const string TerminalWindowClass = "CASCADIA_HOSTING_WINDOW_CLASS";
     private const string ChromeWindowClass = "Chrome_WidgetWin_1";
     private const string DefaultsFileName = "runJointLauncher.json";
-    private const string LauncherFileName = "runJointLauncher.cs";
+    // This file by its path from the workspace (the current folder), as `dotnet run` takes it from there.
+    private static string LauncherSourcePath => Path.GetRelativePath(Directory.GetCurrentDirectory(), (string)AppContext.GetData("EntryPointFilePath")!).Replace('\\', '/');
     // Run from source, the SDK sets EntryPointFilePath; the published single-file binary (runJointBuild.cs) has none.
     private static readonly bool FromSource = AppContext.GetData("EntryPointFilePath") is string;
     private static readonly TimeSpan WindowWait = TimeSpan.FromSeconds(30);
@@ -650,12 +651,12 @@ class RunJointLauncher
 
     /// <summary>
     /// The command that runs this launcher with the given arguments, as the help, the doctor and the embedded skills
-    /// name it: `dotnet run runJointLauncher.cs -- &lt;args&gt;` from source, else the published binary by its path.
+    /// name it: `dotnet run &lt;this file from the workspace&gt; -- &lt;args&gt;` from source, else the published binary by its path.
     /// </summary>
     static string LaunchCommand(string args = "")
     {
         string binary = Environment.ProcessPath!;
-        string launcher = FromSource ? $"dotnet run {LauncherFileName}" : binary.Contains(' ') ? $"\"{binary}\"" : binary;
+        string launcher = FromSource ? (LauncherSourcePath.Contains(' ') ? $"dotnet run \"{LauncherSourcePath}\"" : $"dotnet run {LauncherSourcePath}") : binary.Contains(' ') ? $"\"{binary}\"" : binary;
         return args.Length == 0 ? launcher : FromSource ? $"{launcher} -- {args}" : $"{launcher} {args}";
     }
 

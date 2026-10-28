@@ -3,7 +3,7 @@
 > [!WARNING]
 > **This software is fully "vibe coded"**: it was written entirely with an AI coding assistant. Every part of it
 > has been **verified by testing on Windows 11, macOS and Ubuntu Linux**, but it comes with no warranty (see the
-> [MIT License](LICENSE)). Read the one file it is built from, [`runJointLauncher.cs`](runJointLauncher.cs), if you
+> [MIT License](LICENSE)). Read the one file it is built from, [`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs), if you
 > want to know exactly what it does, and use it at your own risk.
 
 **Work side by side with an AI assistant, and watch everything it does in the browser.**
@@ -78,8 +78,10 @@ You only install these once. [USAGE.md](USAGE.md) gives the exact install steps 
 
 The two windows open, and the assistant asks you what you'd like to do.
 
-Prefer to run the source? With **.NET 10** or later installed, download [`runJointLauncher.cs`](runJointLauncher.cs)
-instead and run `dotnet run runJointLauncher.cs -- --harness claude`: it does exactly the same.
+Prefer to run the source? With **.NET 10** or later installed, download [`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs)
+instead and run `dotnet run runJointLauncher.cs -- --harness claude`: it does exactly the same. In a clone of this
+repository, `runJointLauncher.bat` (Windows), `./runJointLauncher.sh` (Linux) or `runJointLauncher.command` (Mac) runs
+it from the clone's folder.
 
 ## Learn more
 
@@ -90,7 +92,7 @@ instead and run `dotnet run runJointLauncher.cs -- --harness claude`: it does ex
 
 ## Is it safe?
 
-- The launcher is built from **one readable file** ([`runJointLauncher.cs`](runJointLauncher.cs)). It installs
+- The launcher is built from **one readable file** ([`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs)). It installs
   nothing by itself: when something is missing, the assistant asks before installing anything.
 - The shared browser uses a **fresh, empty profile** every time: it can't see your normal browser's passwords,
   bookmarks or history.

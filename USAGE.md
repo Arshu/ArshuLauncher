@@ -98,7 +98,7 @@ The launcher is **one program file** for your computer, from the
 
 > **Prefer to run the source?** With **.NET 10** or later installed (`winget install --id Microsoft.DotNet.SDK.10 -e`,
 > `brew install --cask dotnet-sdk` or `sudo apt install dotnet-sdk-10.0`), download
-> [runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/runJointLauncher.cs) instead and
+> [runJointLauncher.cs](https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/csharp/Tools/ArshuLauncher/runJointLauncher.cs) instead and
 > type `dotnet run runJointLauncher.cs --` wherever this guide says `./runJointLauncher`. It does exactly the same.
 
 ---

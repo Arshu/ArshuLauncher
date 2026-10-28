@@ -1,0 +1,4 @@
+# The scripts that run csharp/Tools/ArshuLauncher/runJointLauncher.cs: sh needs LF, cmd CRLF.
+*.sh text eol=lf
+*.command text eol=lf
+*.bat text eol=crlf
