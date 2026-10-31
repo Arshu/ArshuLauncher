@@ -250,7 +250,7 @@ class RunJointLauncher
                                   $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}.");
                 return 1;
             }
-            if (!File.Exists(skillFile))
+            if (!IsCarriedSkill(startSkill) && !File.Exists(skillFile))
             {
                 Console.WriteLine($"Error: skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {defaultsFile}.");
                 return 1;
@@ -265,14 +265,24 @@ class RunJointLauncher
                 Console.WriteLine("Error: --skillargs takes letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).");
                 return 1;
             }
-            string? prompt = SkillPrompt(workspaceDir, harness!, skillFile, startSkill, skillArgs, out string promptError);
-            if (prompt == null)
+            var lostSkills = LostSkills(workspaceDir, harness!, FindSkillsFolder());
+            if (lostSkills.Contains(startSkill))
             {
-                Console.WriteLine(promptError);
-                return 1;
+                // A skill is not required: the terminal and the browser are useful without one, so the harness starts plain.
+                Console.WriteLine($"[joint-launcher] no skill: {LostSkillsWhy(lostSkills, FindSkillsFolder(), defaults.SkillsRemote)}; {harness!.Name} starts without {startSkill}.");
+                title = "Joint session";
             }
-            skillPrompt = prompt;
-            title = $"Joint session - {startSkill}";
+            else
+            {
+                string? prompt = SkillPrompt(workspaceDir, harness!, skillFile, startSkill, skillArgs, out string promptError);
+                if (prompt == null)
+                {
+                    Console.WriteLine(promptError);
+                    return 1;
+                }
+                skillPrompt = prompt;
+                title = $"Joint session - {startSkill}";
+            }
         }
 
         // A session opens a terminal of its own only on --newterminal.
@@ -288,8 +298,6 @@ class RunJointLauncher
             missing.Add(token);
             Console.WriteLine($"[joint-launcher] missing {token}: {why}");
         }
-        if (!skipHarness && LostSkills(workspaceDir, harness!, FindSkillsFolder()).Contains(startSkill))
-            Missing("skills", LostSkillsWhy(LostSkills(workspaceDir, harness!, FindSkillsFolder()), FindSkillsFolder(), defaults.SkillsRemote));
         // Linux places windows through X11; Wayland lets no app place windows, so there both open unplaced.
         bool placeWindows = !(isLinux && IsWayland());
         string[]? linuxTerminal = null;
@@ -455,14 +463,14 @@ class RunJointLauncher
         }
         if (hereTerminal)
         {
-            Console.WriteLine($"[joint-launcher] this terminal starts {harness!.Name} on: {skillPrompt}; exiting it closes the browser.");
+            Console.WriteLine($"[joint-launcher] this terminal starts {harness!.Name} {OnSkill(skillPrompt)}; exiting it closes the browser.");
             // Windows ends this process as soon as the handler returns, so closing the console closes the browser in the handler.
             using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => CloseSession(browser));
             int exitCode = RunHarnessHere(workspaceDir, harness, harnessPath!, skillPrompt, new List<string>());
             CloseSession(browser);
             return exitCode;
         }
-        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} on: {skillPrompt}");
+        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} {OnSkill(skillPrompt)}");
         Console.WriteLine("[joint-launcher] done: the windows stay open on their own; close them to end the session.");
         return 0;
     }
@@ -1072,7 +1080,7 @@ Answer 'refused no new window appeared'
     /// </summary>
     static string[]? LinuxTerminalCommand(string workspaceDir, string title, string harnessCommand, string skillPrompt)
     {
-        string script = $"cd {ShQuote(workspaceDir)} && {harnessCommand} {ShQuote(skillPrompt)}; exec bash";
+        string script = $"cd {ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + ShQuote(skillPrompt))}; exec bash";
         foreach (var (name, prefix) in new (string, string[])[]
                  {
                      ("gnome-terminal", new[] { "--title", title, "--" }),
@@ -1115,7 +1123,7 @@ Answer 'refused no new window appeared'
     static string? OpenMacTerminal(string workspaceDir, string title, string harnessCommand, string skillPrompt, Rect area)
     {
         static string AppleScriptString(string text) => "\"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-        string command = $"cd {ShQuote(workspaceDir)} && {harnessCommand} {ShQuote(skillPrompt)}";
+        string command = $"cd {ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + ShQuote(skillPrompt))}";
         string script = string.Join("\n",
             "tell application \"Terminal\"",
             "  activate",
@@ -1139,8 +1147,9 @@ Answer 'refused no new window appeared'
     {
         var terminalsBefore = new HashSet<IntPtr>(TopLevelWindows(TerminalWindowClass));
         var wt = new ProcessStartInfo("wt.exe") { UseShellExecute = true };
-        foreach (var arg in new[] { "-w", "new", "-d", workspaceDir, "--title", title, "cmd.exe", "/k", harnessCommand, skillPrompt })
+        foreach (var arg in new[] { "-w", "new", "-d", workspaceDir, "--title", title, "cmd.exe", "/k", harnessCommand })
             wt.ArgumentList.Add(arg);
+        if (skillPrompt.Length > 0) wt.ArgumentList.Add(skillPrompt);
         // wt.exe hands the window to WindowsTerminal.exe and exits, so the new window is found as the one that was not
         // there before.
         Process.Start(wt)?.Dispose();
@@ -1235,7 +1244,7 @@ Answer 'refused no new window appeared'
         if (chosen != null)
         {
             var lost = LostSkills(workspaceDir, chosen, FindSkillsFolder());
-            Check(lost.Count == 0, $"{chosen.Name} skills all at hand", LostSkillsWhy(lost, FindSkillsFolder(), defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote));
+            Check(lost.Count == 0, $"{chosen.Name} skills all at hand", LostSkillsWhy(lost, FindSkillsFolder(), defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote), required: false);
         }
         if (isWindows) Check(FindOnPath("wt.exe") != null, "Windows Terminal (wt.exe; only --newterminal)", "winget install --id Microsoft.WindowsTerminal -e", required: false);
         if (isMac) Check(FindOnPath("osascript") != null, "osascript (moves or opens Terminal.app)", "part of macOS; check PATH includes /usr/bin", required: false);
@@ -1614,7 +1623,7 @@ Answer 'refused no new window appeared'
             start.ArgumentList.Add("/c");
             start.ArgumentList.Add(harness.Command);
         }
-        start.ArgumentList.Add(prompt);
+        if (prompt.Length > 0) start.ArgumentList.Add(prompt);
         return Process.Start(start) ?? throw new InvalidOperationException($"could not start {harnessPath}");
     }
 
@@ -1692,11 +1701,14 @@ attach to. The session ends when you close its windows.
 """);
     }
 
+    /// <summary>How a harness start reads in a message: on the skill's prompt, or with none.</summary>
+    static string OnSkill(string skillPrompt) => skillPrompt.Length == 0 ? "with no skill" : "on: " + skillPrompt;
+
     static string StatusPage(string harnessName, string skillPrompt, bool skipHarness)
     {
         string shared = skipHarness ? "This window is shared with the AI session that opened it" : "This window is shared with the AI session in the terminal";
         string starting = skipHarness ? $"    <li>Browser-only joint session: attach from your harness with <code>{BrowserSkill}</code> (CDP <code>http://127.0.0.1:{CdpPort}</code>).</li>\n"
-            : $"    <li>{WebUtility.HtmlEncode(harnessName)} is starting in the terminal on <code>{WebUtility.HtmlEncode(skillPrompt)}</code>.</li>\n";
+            : $"    <li>{WebUtility.HtmlEncode(harnessName)} is starting in the terminal{(skillPrompt.Length == 0 ? "" : " on <code>" + WebUtility.HtmlEncode(skillPrompt) + "</code>")}.</li>\n";
         return """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Joint session</title>
