@@ -21,22 +21,30 @@ using System.Threading;
 /// harness on a skill (--skill, else DefaultSkill, else joint-launcher, which asks what to do; --skillargs is the
 /// skill's own arguments).
 ///
-/// Self-contained and repository-independent: copy this one file into any folder (a repository or not) on Windows,
+/// Repository-independent: copy this file and the skills folder into any folder (a repository or not) on Windows,
 /// macOS or Linux and run it from there with .NET 10+. It needs no package. runJointBuild.cs compiles it to the
 /// NativeAOT single file runJointLauncher-&lt;os&gt;-&lt;arch&gt; (e.g. runJointLauncher-win-x64.exe), which runs the
-/// same way without .NET; the help, the doctor and the skills name whichever was run (LaunchCommand). It carries the skills joint-launcher,
-/// joint-browser (Playwright on the shared browser), joint-launcher-install and joint-launcher-doctor (EmbeddedSkills) and writes them to the harness's skills folder
+/// same way without .NET; the help, the doctor and the skills name whichever was run (LaunchCommand). It embeds the skills joint-launcher-install and joint-launcher-doctor (EmbeddedSkills), takes joint-launcher
+/// and joint-browser (FolderSkills) from the nearest skills folder at or above it (absent, the install skill downloads them from
+/// SkillsRemote in runJointLauncher.json) and writes them to the harness's skills folder
 /// there when missing, never over a copy already there; other skills are named in runJointLauncher.json with their
 /// SKILL.md path. Launching checks, in order: the harness is supported and installed (else it says how to install it
-/// and stops), the embedded skills are in place, then what the session needs (a terminal and a browser). Anything of
+/// and stops), the skills are in place, then what the session needs (a terminal and a browser). Anything of
 /// that missing starts the harness in the launcher's own console on joint-launcher-install (a bootstrap) instead.
 ///
+/// A launch opens no second terminal unless asked to. Inside a harness (CallingHarness), or started by any other program (input that
+/// is no console), the caller's harness is the session's: the browser opens beside its terminal, or over the whole work
+/// area when that window cannot be moved, nothing else starts, and what is missing is printed with its fix. A named
+/// harness only says whose skills folder gets the embedded skills; it need not be on PATH. From a plain terminal the
+/// harness starts in that terminal, beside the browser. --newterminal opens a terminal of its own instead, and so does a
+/// harness named inside another one, whose terminal then stays where it is.
+///
 /// runJointLauncher.json (beside where it runs, per machine; created on the first session) holds the defaults for
-/// --harness, --skill, --position and --ratio, Skills and Browser; a --skill, --position or --ratio given on the command
+/// --harness, --skill, --position and --ratio, Skills and DefaultBrowser; a --skill, --position or --ratio given on the command
 /// line becomes the new default once the session opens.
 ///
-/// The session records where its browser is (&lt;local app data&gt;/joint-launcher/session.json: cdp, harness, skill)
-/// for a skill to attach to.
+/// The session records where its browser is (&lt;local app data&gt;/joint-launcher/session.json: cdp, harness, skill,
+/// skipHarness) for a skill to attach to.
 ///
 /// Platforms (run it from the desktop session, not over ssh): Windows (Windows Terminal, Win32 placement), macOS
 /// (Terminal.app through AppleScript, the browser placed by its window flags) and Linux (gnome-terminal, konsole,
@@ -49,6 +57,7 @@ class RunJointLauncher
 {
     private const int CdpPort = 9222;               // the usual DevTools port browser MCP servers attach to
     private const string TerminalWindowClass = "CASCADIA_HOSTING_WINDOW_CLASS";
+    private const string ConsoleWindowClass = "ConsoleWindowClass";
     private const string ChromeWindowClass = "Chrome_WidgetWin_1";
     private const string DefaultsFileName = "runJointLauncher.json";
     // This file by its path from the workspace (the current folder), as `dotnet run` takes it from there.
@@ -78,7 +87,7 @@ class RunJointLauncher
     };
 
     /// <summary>
-    /// A skill the launcher carries (EmbeddedSkills), written to the harness's skills folder when it is not there yet;
+    /// A skill embedded in the tool (EmbeddedSkills), written to the harness's skills folder when it is not there yet;
     /// a copy already there is the user's and is never overwritten.
     /// </summary>
     sealed record JointSkill(string Name, string Text, string HelperName = "", string HelperText = "")
@@ -91,6 +100,9 @@ class RunJointLauncher
         }
     }
 
+    /// <summary>A skill read from the skills folder: its name and the files its folder holds.</summary>
+    sealed record FolderSkill(string Name, string[] Files);
+
     // The skill the harness starts on when no skill is given: it lists the available skills and loads the chosen one.
     private const string ChooserSkill = "joint-launcher";
     // The skill a bootstrap starts on (the harness in the launcher's console) when the session cannot open yet.
@@ -98,29 +110,32 @@ class RunJointLauncher
     private const string DoctorSkill = "joint-launcher-doctor";
     // Drives the shared browser with Playwright (its helper browser.mjs beside SKILL.md); the same skill in runJointSession.cs.
     private const string BrowserSkill = "joint-browser";
+    // The skills not embedded: a launch copies them from the tracked skills folder (FindSkillsFolder), one source for every tool.
+    private const string SkillsFolderName = "skills";
+    private static readonly FolderSkill[] FolderSkills = { new(ChooserSkill, new[] { "SKILL.md" }), new(BrowserSkill, new[] { "SKILL.md", "browser.mjs" }) };
 
     /// <summary>
     /// The launcher's defaults (runJointLauncher.json); an empty DefaultHarness makes --harness mandatory. Skills names
     /// the skills besides the embedded ones, each with its SKILL.md path (relative to the launch folder unless
-    /// absolute); one is offered only while that file exists. Browser is "auto" (FindBrowser's order) or the path of a
-    /// Chromium-based browser.
+    /// absolute); one is offered only while that file exists. DefaultBrowser is "" (Google Chrome, on every OS), "auto"
+    /// (FindBrowser's order) or the path of a Chromium-based browser.
     /// </summary>
     sealed record JointDefaults(string DefaultHarness, string DefaultSkill, string DefaultPosition, string DefaultRatio,
-        IReadOnlyDictionary<string, string> Skills, string Browser);
+        IReadOnlyDictionary<string, string> Skills, string DefaultBrowser, string SkillsRemote);
 
-    private static readonly JointDefaults InitialDefaults = new("", "", "left:right", "1:2", new Dictionary<string, string>(), "auto");
-    private static readonly string[] DefaultsKeys = { "DefaultHarness", "DefaultSkill", "DefaultPosition", "DefaultRatio", "Browser" };
+    private static readonly JointDefaults InitialDefaults = new("", "", "left:right", "1:2", new Dictionary<string, string>(), "", "https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/skills");
+    private static readonly string[] DefaultsKeys = { "DefaultHarness", "DefaultSkill", "DefaultPosition", "DefaultRatio", "DefaultBrowser" };
 
     static int Main(string[] args)
     {
-        if (args.Length == 0) { PrintUsage(); return 0; }
         string? harnessName = null, skillName = null, skillArgs = null, position = null, ratio = null;
-        bool doctor = false;
+        bool doctor = false, newTerminal = false;
         for (int i = 0; i < args.Length; i++)
         {
             string a = args[i];
             if (a is "--help" or "-h") { PrintUsage(); return 0; }
             if (a == "--doctor") doctor = true;
+            else if (a == "--newterminal") newTerminal = true;
             else if (a == "--harness" && i + 1 < args.Length) harnessName = args[++i].ToLowerInvariant();
             else if (a == "--skill" && i + 1 < args.Length) skillName = args[++i];
             else if (a == "--skillargs" && i + 1 < args.Length) skillArgs = args[++i].Trim();
@@ -134,6 +149,22 @@ class RunJointLauncher
             }
         }
 
+        // Never a second terminal: a harness, or any program (input that is no console), is the session's own, and a plain terminal runs the harness itself.
+        var chain = ParentChain();
+        Harness? caller = doctor || newTerminal ? null : CallingHarness(chain);
+        // A harness named other than the caller starts in a terminal of its own; the caller's stays where it is.
+        if (caller != null && harnessName != null && harnessName != caller.Name) { newTerminal = true; caller = null; }
+        // Inside a harness nothing needs saying, so no arguments open the session; anywhere else they print the usage.
+        if (args.Length == 0 && caller == null) { PrintUsage(); return 0; }
+        bool skipHarness = !doctor && !newTerminal && (caller != null || Console.IsInputRedirected);
+        if (skipHarness && (skillName != null || skillArgs != null))
+        {
+            Console.WriteLine(caller != null
+                ? $"Error: this runs inside {caller.Name}, which is the session's harness, so --skill and --skillargs have nothing to start; load the skill here, or pass --newterminal for a terminal of its own."
+                : "Error: a program started this, so it starts no harness and --skill and --skillargs have nothing to start; pass --newterminal for a terminal of its own.");
+            return 1;
+        }
+
         var workspaceDir = Directory.GetCurrentDirectory();
         string defaultsFile = Path.Combine(workspaceDir, DefaultsFileName);
         if (doctor) return Doctor(workspaceDir, defaultsFile, harnessName);
@@ -145,7 +176,7 @@ class RunJointLauncher
         }
         // --harness is for this run only; DefaultHarness is changed by editing the file.
         bool defaultsChanged = skillName != null || position != null || ratio != null;
-        harnessName ??= defaults.DefaultHarness;
+        harnessName ??= caller?.Name ?? defaults.DefaultHarness;
         position ??= defaults.DefaultPosition;
         ratio ??= defaults.DefaultRatio;
         skillName ??= defaults.DefaultSkill;
@@ -160,6 +191,12 @@ class RunJointLauncher
             return 1;
         }
         ratio = $"{terminalPart}:{browserPart}";
+        // Side by side a terminal narrower than this falls short of the width it can take (Windows Terminal stopped at 691 px of 2560).
+        if (position is "left:right" or "right:left" && browserPart > 2 * terminalPart)
+        {
+            Console.WriteLine("[joint-launcher] side by side the terminal takes at least 1:2: using 1:2.");
+            (terminalPart, browserPart, ratio, defaultsChanged) = (1, 2, "1:2", true);
+        }
 
         bool isWindows = OperatingSystem.IsWindows(), isMac = OperatingSystem.IsMacOS(), isLinux = OperatingSystem.IsLinux();
         if (!isWindows && !isMac && !isLinux)
@@ -169,97 +206,120 @@ class RunJointLauncher
         }
 
         // 1. The harness: one of the supported ones, named by --harness or DefaultHarness.
-        if (harnessName.Length == 0)
+        if (harnessName.Length == 0 && !skipHarness)
         {
             Console.WriteLine($"Error: no harness: pass --harness {HarnessNames()} or set DefaultHarness in {defaultsFile}.");
             return 1;
         }
-        Harness? harness = FindHarness(harnessName);
-        if (harness == null)
+        Harness? harness = harnessName.Length == 0 ? null : FindHarness(harnessName);
+        if (harness == null && harnessName.Length > 0)
         {
             Console.WriteLine($"Error: harness '{harnessName}' is not supported; use {HarnessNames()}.");
             return 1;
         }
         // 2. The harness is installed: without it there is nothing to start, so this is the one prerequisite the
-        // launcher cannot hand to the harness.
-        string? harnessPath = HarnessPath(harness);
-        if (harnessPath == null)
+        // launcher cannot hand to the harness. A session inside its caller starts none.
+        string? harnessPath = harness == null ? null : HarnessPath(harness);
+        if (harnessPath == null && !skipHarness)
         {
-            Console.WriteLine($"Error: {harness.Name} is not on PATH. Install it with:\n  {(isWindows ? harness.InstallWindows : harness.InstallUnix)}\n" +
+            Console.WriteLine($"Error: {harness!.Name} is not on PATH. Install it with:\n  {(isWindows ? harness.InstallWindows : harness.InstallUnix)}\n" +
                               $"then sign in once by running {harness.Command} in a NEW terminal, and run the launcher again from there.");
             return 1;
         }
         // 3. The embedded skills in the harness's skills folder (a copy already there is kept).
-        string? skillsError = InstallSkills(workspaceDir, harness);
-        if (skillsError != null)
+        if (harness != null)
         {
-            Console.WriteLine(skillsError);
-            return 1;
+            string? skillsError = InstallSkills(workspaceDir, harness, FindSkillsFolder());
+            if (skillsError != null)
+            {
+                Console.WriteLine(skillsError);
+                return 1;
+            }
+        }
+        else Console.WriteLine($"[joint-launcher] no harness named: the skills step is skipped (--harness {HarnessNames()} installs {BrowserSkill} for the calling session).");
+
+        string startSkill = "", skillPrompt = "", title = "";
+        if (!skipHarness)
+        {
+            // No skill starts the harness on joint-launcher, which asks the user which skill to load.
+            startSkill = skillName.Length == 0 ? ChooserSkill : skillName;
+            string? skillFile = SkillFile(workspaceDir, harness!, defaults, startSkill);
+            if (skillFile == null)
+            {
+                Console.WriteLine($"Error: skill '{startSkill}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {defaultsFile}" +
+                                  $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}.");
+                return 1;
+            }
+            if (!File.Exists(skillFile))
+            {
+                Console.WriteLine($"Error: skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {defaultsFile}.");
+                return 1;
+            }
+            if (startSkill == ChooserSkill && !string.IsNullOrEmpty(skillArgs))
+            {
+                Console.WriteLine($"Error: --skillargs are a named skill's arguments; pass --skill too, or leave both out for {ChooserSkill}.");
+                return 1;
+            }
+            if (!string.IsNullOrEmpty(skillArgs) && !SafeSkillArgs(skillArgs))
+            {
+                Console.WriteLine("Error: --skillargs takes letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).");
+                return 1;
+            }
+            string? prompt = SkillPrompt(workspaceDir, harness!, skillFile, startSkill, skillArgs, out string promptError);
+            if (prompt == null)
+            {
+                Console.WriteLine(promptError);
+                return 1;
+            }
+            skillPrompt = prompt;
+            title = $"Joint session - {startSkill}";
         }
 
-        // No skill starts the harness on joint-launcher, which asks the user which skill to load.
-        string startSkill = skillName.Length == 0 ? ChooserSkill : skillName;
-        string? skillFile = SkillFile(workspaceDir, harness, defaults, startSkill);
-        if (skillFile == null)
-        {
-            Console.WriteLine($"Error: skill '{startSkill}' is neither embedded ({EmbeddedSkillNames()}) nor configured in Skills of {defaultsFile}" +
-                              $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}.");
-            return 1;
-        }
-        if (!File.Exists(skillFile))
-        {
-            Console.WriteLine($"Error: skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {defaultsFile}.");
-            return 1;
-        }
-        if (startSkill == ChooserSkill && !string.IsNullOrEmpty(skillArgs))
-        {
-            Console.WriteLine($"Error: --skillargs are a named skill's arguments; pass --skill too, or leave both out for {ChooserSkill}.");
-            return 1;
-        }
-        if (!string.IsNullOrEmpty(skillArgs) && !SafeSkillArgs(skillArgs))
-        {
-            Console.WriteLine("Error: --skillargs takes letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).");
-            return 1;
-        }
-        string? skillPrompt = SkillPrompt(workspaceDir, harness, skillFile, startSkill, skillArgs, out string promptError);
-        if (skillPrompt == null)
-        {
-            Console.WriteLine(promptError);
-            return 1;
-        }
-        string title = $"Joint session - {startSkill}";
+        // A session opens a terminal of its own only on --newterminal.
+        bool hereTerminal = !skipHarness && !newTerminal;
+        bool opensTerminal = newTerminal;
 
         // 4-5. What the session needs besides the harness. Anything missing is no refusal: the harness starts in this
-        // console on joint-launcher-install (a bootstrap) to set it up, and the next launch opens the session.
+        // console on joint-launcher-install (a bootstrap) to set it up, and the next launch opens the session. Inside its caller
+        // this console is the caller's shell, so what is missing is only printed with its fix.
         var missing = new List<string>();
         void Missing(string token, string why)
         {
             missing.Add(token);
             Console.WriteLine($"[joint-launcher] missing {token}: {why}");
         }
+        if (!skipHarness && LostSkills(workspaceDir, harness!, FindSkillsFolder()).Contains(startSkill))
+            Missing("skills", LostSkillsWhy(LostSkills(workspaceDir, harness!, FindSkillsFolder()), FindSkillsFolder(), defaults.SkillsRemote));
         // Linux places windows through X11; Wayland lets no app place windows, so there both open unplaced.
         bool placeWindows = !(isLinux && IsWayland());
         string[]? linuxTerminal = null;
-        if (isWindows && FindOnPath("wt.exe") == null)
+        if (opensTerminal && isWindows && FindOnPath("wt.exe") == null)
             Missing("terminal", "Windows Terminal (wt.exe) is not on PATH: winget install --id Microsoft.WindowsTerminal -e");
-        if (isMac && FindOnPath("osascript") == null)
+        if (opensTerminal && isMac && FindOnPath("osascript") == null)
             Missing("terminal", "osascript is not on PATH (it opens Terminal.app); it ships with macOS in /usr/bin");
         if (isLinux)
         {
             if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")) && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY")))
                 Missing("desktop", "no desktop session (DISPLAY and WAYLAND_DISPLAY are empty): run the launcher from a terminal on the desktop, not over ssh");
-            linuxTerminal = LinuxTerminalCommand(workspaceDir, title, harness.Command, skillPrompt);
-            if (linuxTerminal == null)
-                Missing("terminal", "no supported terminal on PATH (gnome-terminal, konsole, xfce4-terminal or xterm): sudo apt install gnome-terminal");
+            if (opensTerminal)
+            {
+                linuxTerminal = LinuxTerminalCommand(workspaceDir, title, harness!.Command, skillPrompt);
+                if (linuxTerminal == null)
+                    Missing("terminal", "no supported terminal on PATH (gnome-terminal, konsole, xfce4-terminal or xterm): sudo apt install gnome-terminal");
+            }
         }
-        string? foundBrowser = FindBrowser(defaults.Browser, out string browserFound);
+        string? foundBrowser = FindBrowser(defaults.DefaultBrowser, out string browserFound);
         if (foundBrowser == null) Missing("browser", browserFound);
         else Console.WriteLine($"[joint-launcher] browser: {foundBrowser} ({browserFound})");
 
         if (missing.Count > 0)
-            return Bootstrap(workspaceDir, harness, harnessPath, missing);
+            return skipHarness ? 1 : Bootstrap(workspaceDir, harness!, harnessPath!, missing);
         string chrome = foundBrowser!;   // nothing is missing past the bootstrap
 
+        string deskDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "joint-launcher");
+        string profileDir = Path.Combine(deskDir, "profile");
+        string sessionFile = Path.Combine(deskDir, "session.json");
+        if (isMac) CloseWindowlessBrowser(sessionFile);
         if (PortAnswers(CdpPort))
         {
             Console.WriteLine($"Error: 127.0.0.1:{CdpPort} is already in use (a joint session's browser, or another browser started with " +
@@ -267,9 +327,6 @@ class RunJointLauncher
             return 1;
         }
 
-        string deskDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "joint-launcher");
-        string profileDir = Path.Combine(deskDir, "profile");
-        string sessionFile = Path.Combine(deskDir, "session.json");
         string statusPage = Path.Combine(deskDir, "desk.html");
         try
         {
@@ -277,7 +334,7 @@ class RunJointLauncher
             if (Directory.Exists(profileDir)) Directory.Delete(profileDir, true);
             Directory.CreateDirectory(profileDir);
             // Until the harness navigates the window it shows what to do next instead of a blank page.
-            File.WriteAllText(statusPage, StatusPage(harness.Name, skillPrompt), new UTF8Encoding(false));
+            File.WriteAllText(statusPage, StatusPage(harness?.Name ?? "", skillPrompt, skipHarness), new UTF8Encoding(false));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -306,8 +363,16 @@ class RunJointLauncher
                 return 1;
             }
         }
+        Func<Rect, string?>? moveCaller = null;
+        string callerWhy = "";
+        if (placeWindows && !opensTerminal) moveCaller = FindCallerTerminal(chain, out callerWhy);
         Rect terminalArea = default, browserArea = default;
-        if (placeWindows)
+        if (placeWindows && !opensTerminal && moveCaller == null)
+        {
+            browserArea = work;
+            Console.WriteLine($"[joint-launcher] work area {work.Right - work.Left}x{work.Bottom - work.Top} at {work.Left},{work.Top}: the browser alone ({callerWhy})");
+        }
+        else if (placeWindows)
         {
             Layout(work, position, terminalPart, browserPart, out terminalArea, out browserArea);
             Console.WriteLine($"[joint-launcher] work area {work.Right - work.Left}x{work.Bottom - work.Top} at {work.Left},{work.Top}, {position} {ratio}: " +
@@ -315,8 +380,13 @@ class RunJointLauncher
                               $"browser {browserArea.Right - browserArea.Left}x{browserArea.Bottom - browserArea.Top}");
         }
         else
-            Console.WriteLine("[joint-launcher] Wayland lets no app place windows: the terminal and the browser open where the desktop puts them; " +
+            Console.WriteLine($"[joint-launcher] Wayland lets no app place windows: {(skipHarness ? "the browser opens" : "the terminal and the browser open")} where the desktop puts them; " +
                               "arrange them yourself, or log in to an X11 session for the layout.");
+        // Browser first, as with a terminal of its own; this terminal moves once the session can open.
+        void MoveCaller()
+        {
+            if (moveCaller?.Invoke(terminalArea) is string moveError) Console.WriteLine($"[joint-launcher] {moveError}");
+        }
 
         string browserLog = Path.Combine(deskDir, "browser.log");
         // Browser first: it is the slower window to appear, and the terminal is the one the user types into next.
@@ -352,28 +422,47 @@ class RunJointLauncher
             return 1;
         }
 
-        // The terminal runs the harness as a session of its own, not as a child of a Claude that ran this launcher.
-        ForgetParentClaudeSession();
-        string? terminalError = isWindows ? OpenWindowsTerminal(workspaceDir, title, harness.Command, skillPrompt, terminalArea)
-            : isMac ? OpenMacTerminal(workspaceDir, title, harness.Command, skillPrompt, terminalArea)
-            : OpenLinuxTerminal(linuxTerminal!, browser.Id, placeWindows ? terminalArea : (Rect?)null);
-        if (terminalError != null)
+        MoveCaller();
+        if (opensTerminal)
         {
-            Console.WriteLine(terminalError);
-            CloseSession(browser);
-            return 1;
+            // The terminal runs the harness as a session of its own, not as a child of a Claude that ran this launcher.
+            ForgetParentClaudeSession();
+            string? terminalError = isWindows ? OpenWindowsTerminal(workspaceDir, title, harness!.Command, skillPrompt, terminalArea)
+                : isMac ? OpenMacTerminal(workspaceDir, title, harness!.Command, skillPrompt, terminalArea)
+                : OpenLinuxTerminal(linuxTerminal!, browser.Id, placeWindows ? terminalArea : (Rect?)null);
+            if (terminalError != null)
+            {
+                Console.WriteLine(terminalError);
+                CloseSession(browser);
+                return 1;
+            }
         }
 
-        WriteSession(sessionFile, browser.Id, profileDir, workspaceDir, harness.Name, startSkill);
+        WriteSession(sessionFile, browser.Id, profileDir, workspaceDir, harness?.Name ?? "", startSkill, skipHarness);
         // Only an opened session makes its command-line choices the defaults, so a refused run changes nothing.
-        if (defaultsChanged || !File.Exists(defaultsFile))
+        // A run that starts no harness does not create the file.
+        if (defaultsChanged || (!skipHarness && !File.Exists(defaultsFile)))
         {
             WriteDefaults(defaultsFile, defaults with { DefaultSkill = skillName, DefaultPosition = position, DefaultRatio = ratio });
             Console.WriteLine($"[joint-launcher] defaults saved to {defaultsFile}: skill {(skillName.Length == 0 ? "(none: " + ChooserSkill + " asks)" : skillName)}, position {position}, ratio {ratio}");
         }
 
         Console.WriteLine($"[joint-launcher] browser pid {browser.Id} on CDP 127.0.0.1:{CdpPort}; session file {sessionFile}");
-        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness.Name} on: {skillPrompt}");
+        if (skipHarness)
+        {
+            Console.WriteLine($"[joint-launcher] done: the browser stays open on its own; attach from your harness with {BrowserSkill} (CDP http://127.0.0.1:{CdpPort}) and close it to end the session.");
+            return 0;
+        }
+        if (hereTerminal)
+        {
+            Console.WriteLine($"[joint-launcher] this terminal starts {harness!.Name} on: {skillPrompt}; exiting it closes the browser.");
+            // Windows ends this process as soon as the handler returns, so closing the console closes the browser in the handler.
+            using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => CloseSession(browser));
+            int exitCode = RunHarnessHere(workspaceDir, harness, harnessPath!, skillPrompt, new List<string>());
+            CloseSession(browser);
+            return exitCode;
+        }
+        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} on: {skillPrompt}");
         Console.WriteLine("[joint-launcher] done: the windows stay open on their own; close them to end the session.");
         return 0;
     }
@@ -411,7 +500,7 @@ class RunJointLauncher
         return null;
     }
 
-    static void WriteSession(string sessionFile, int browserPid, string profileDir, string workspaceDir, string harness, string skill)
+    static void WriteSession(string sessionFile, int browserPid, string profileDir, string workspaceDir, string harness, string skill, bool skipHarness)
     {
         using var stream = File.Create(sessionFile);
         using var json = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true });
@@ -422,9 +511,346 @@ class RunJointLauncher
         json.WriteString("workspace", workspaceDir);
         json.WriteString("harness", harness);
         json.WriteString("skill", skill);
+        json.WriteBoolean("skipHarness", skipHarness);
         json.WriteString("startedUtc", DateTime.UtcNow.ToString("o"));
         json.WriteEndObject();
     }
+
+    /// <summary>The processes this one runs under, nearest first (itself included): pid and lowercase name without extension.</summary>
+    static List<(int Pid, string Name)> ParentChain()
+    {
+        var chain = new List<(int Pid, string Name)>();
+        if (OperatingSystem.IsWindows())
+        {
+            var processes = new Dictionary<int, (int Parent, string Name)>();
+            IntPtr snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
+            var entry = new ProcessEntry32 { Size = Marshal.SizeOf<ProcessEntry32>() };
+            for (bool more = Process32First(snapshot, ref entry); more; more = Process32Next(snapshot, ref entry))
+                processes[entry.ProcessId] = (entry.ParentProcessId, entry.ExeFile);
+            CloseToolhelpSnapshot(snapshot);
+            for (int pid = Environment.ProcessId; chain.Count < MaxParents && processes.TryGetValue(pid, out var process); pid = process.Parent)
+                chain.Add((pid, Path.GetFileNameWithoutExtension(process.Name).ToLowerInvariant()));
+            // An exited parent ends the walk (a nested script of a harness's shell); Claude Code names its own process, which leads on to the terminal.
+            if (!chain.Exists(p => p.Name == "windowsterminal") && int.TryParse(Environment.GetEnvironmentVariable("CLAUDE_PID"), out int harness))
+            {
+                for (int pid = harness; chain.Count < MaxParents && processes.TryGetValue(pid, out var process); pid = process.Parent)
+                    chain.Add((pid, Path.GetFileNameWithoutExtension(process.Name).ToLowerInvariant()));
+            }
+            return chain;
+        }
+        for (int pid = Environment.ProcessId; pid > 1 && chain.Count < MaxParents;)
+        {
+            string[] parts = RunTool("ps", new[] { "-o", "ppid=", "-o", "comm=", "-p", pid.ToString() }, out int exit).Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+            if (exit != 0 || parts.Length < 2 || !int.TryParse(parts[0], out int parent)) break;
+            chain.Add((pid, Path.GetFileNameWithoutExtension(parts[1]).ToLowerInvariant()));
+            pid = parent;
+        }
+        return chain;
+    }
+
+    /// <summary>
+    /// The harness this launch runs inside, which is then the session's own: Claude Code marks its children, and any
+    /// harness shows in the parent processes by its command (one running on node shows as node, but its tools' input is no console).
+    /// </summary>
+    static Harness? CallingHarness(List<(int Pid, string Name)> chain)
+    {
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLAUDECODE"))) return FindHarness("claude");
+        foreach (var (_, name) in chain)
+            if (FindHarness(name) is Harness harness) return harness;
+        return null;
+    }
+
+    private const int MaxParents = 32;
+    private const uint Th32csSnapProcess = 2;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct ProcessEntry32
+    {
+        public int Size, Usage, ProcessId;
+        public UIntPtr DefaultHeapId;
+        public int ModuleId, Threads, ParentProcessId, PriorityBase, Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string ExeFile;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+    [DllImport("kernel32.dll", EntryPoint = "Process32FirstW", CharSet = CharSet.Unicode)]
+    static extern bool Process32First(IntPtr snapshot, ref ProcessEntry32 entry);
+    [DllImport("kernel32.dll", EntryPoint = "Process32NextW", CharSet = CharSet.Unicode)]
+    static extern bool Process32Next(IntPtr snapshot, ref ProcessEntry32 entry);
+    [DllImport("kernel32.dll", EntryPoint = "CloseHandle")]
+    static extern bool CloseToolhelpSnapshot(IntPtr handle);
+
+    /// <summary>
+    /// What moves the terminal this launch runs in (a second terminal is what the session avoids); null, with why, when
+    /// that window cannot be told for certain: an IDE's or an app's terminal, a Windows Terminal tab it cannot find, a
+    /// macOS terminal other than Terminal.app, a Linux terminal with no WINDOWID that is not the active window, Wayland. In a Windows Terminal window
+    /// with several tabs only this tab moves, into a new window.
+    /// </summary>
+    static Func<Rect, string?>? FindCallerTerminal(List<(int Pid, string Name)> chain, out string why)
+    {
+        why = "";
+        if (OperatingSystem.IsWindows())
+        {
+            // The process under Windows Terminal is the shell in this tab, and shares its console.
+            int terminal = chain.FindIndex(p => p.Name == "windowsterminal");
+            if (terminal > 0)
+            {
+                int shell = chain[terminal - 1].Pid;
+                string[] tab = TerminalTab("find", shell);
+                if (tab[0] != "window")
+                {
+                    why = tab[1];
+                    return null;
+                }
+                var window = (IntPtr)long.Parse(tab[1]);
+                if (tab[2] == "1") return area => { Place(window, area); return null; };
+                return area =>
+                {
+                    string[] moved = TerminalTab("move", shell);
+                    if (moved[0] != "moved") return $"this tab stays in its window: {moved[1]}";
+                    Place((IntPtr)long.Parse(moved[1]), area);
+                    return null;
+                };
+            }
+            if (TopLevelWindows(ConsoleWindowClass).Contains(GetConsoleWindow()))
+            {
+                IntPtr console = GetConsoleWindow();
+                return area => { Place(console, area); return null; };
+            }
+            why = "this runs in no terminal window it can move (an IDE's or an app's)";
+            return null;
+        }
+        if (OperatingSystem.IsMacOS())
+        {
+            if (Environment.GetEnvironmentVariable("TERM_PROGRAM") != "Apple_Terminal")
+            {
+                why = "only Terminal.app can be moved";
+                return null;
+            }
+            string id = RunTool("osascript", new[] { "-e", "tell application \"Terminal\" to id of front window" }, out int exit).Trim();
+            if (exit != 0 || id.Length == 0)
+            {
+                why = $"Terminal.app gave no window through osascript: {id}";
+                return null;
+            }
+            return area =>
+            {
+                string output = RunTool("osascript", new[] { "-e",
+                    $"tell application \"Terminal\" to set bounds of (first window whose id is {id}) to {{{area.Left}, {area.Top}, {area.Right}, {area.Bottom}}}" }, out int moved);
+                return moved == 0 ? null : $"Terminal.app could not be moved through osascript: {output.Trim()}";
+            };
+        }
+        if (IsWayland())
+        {
+            why = "Wayland lets no app place windows";
+            return null;
+        }
+        if (long.TryParse(Environment.GetEnvironmentVariable("WINDOWID"), out long x11Window))
+            return area => { X11.Place((IntPtr)x11Window, area); return null; };
+        // gnome-terminal sets none, but a launch runs in the window just typed in.
+        if (X11.ActiveWindow() is X11.Window active && chain.Exists(p => p.Pid == active.Pid))
+            return area => { X11.Place(active.Id, area); return null; };
+        why = "this terminal sets no WINDOWID and is not the active window";
+        return null;
+    }
+
+    /// <summary>
+    /// Finds or moves the Windows Terminal tab of the shell, whichever window holds it: wt.exe has no move-tab, so this
+    /// goes through UI Automation and the tab's command palette. A marker in the console title names the one tab (the
+    /// title alone does not: tabs can share one, and a harness animates its own). "find" answers "window handle tabs",
+    /// "move" takes the focus for a moment and answers "moved handle"; else the first part is "refused" with why.
+    /// </summary>
+    static string[] TerminalTab(string action, int shell)
+    {
+        string script = $"$action = '{action}'\n$shell = {shell}\n{TerminalTabScript}";
+        string output = RunTool("powershell.exe", new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }, out int exit).Trim();
+        string[] answer = output.Split(' ', action == "find" ? 3 : 2);
+        return exit == 0 && answer.Length > 1 ? answer : new[] { "refused", $"PowerShell failed ({exit}): {output}" };
+    }
+
+    private const string TerminalTabScript = """
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices; using System.Text;
+public static class Tab
+{
+    [DllImport("kernel32")] public static extern bool FreeConsole();
+    [DllImport("kernel32")] public static extern bool AttachConsole(int pid);
+    [DllImport("kernel32", CharSet = CharSet.Unicode)] public static extern int GetConsoleTitleW(StringBuilder title, int size);
+    [DllImport("kernel32", CharSet = CharSet.Unicode)] public static extern bool SetConsoleTitleW(string title);
+    [DllImport("kernel32")] static extern uint GetCurrentThreadId();
+    [DllImport("user32")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32")] static extern bool SetForegroundWindow(IntPtr window);
+    [DllImport("user32")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32")] static extern bool AttachThreadInput(uint from, uint to, bool attach);
+    [DllImport("user32")] static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+    [StructLayout(LayoutKind.Sequential)] struct Key { public ushort Code, Scan; public uint Flags, Time; public IntPtr Extra; public uint Pad1, Pad2; }
+    [StructLayout(LayoutKind.Sequential)] struct KeyInput { public uint Type; public Key Key; }
+    [DllImport("user32")] static extern uint SendInput(uint count, KeyInput[] inputs, int size);
+    public static void Front(IntPtr window)
+    {
+        uint process, front = GetWindowThreadProcessId(GetForegroundWindow(), out process), self = GetCurrentThreadId();
+        AttachThreadInput(self, front, true);
+        SetForegroundWindow(window);
+        AttachThreadInput(self, front, false);
+    }
+    public static string FrontProcess()
+    {
+        uint process;
+        GetWindowThreadProcessId(GetForegroundWindow(), out process);
+        return System.Diagnostics.Process.GetProcessById((int)process).ProcessName;
+    }
+    public static void Keys(params byte[] keys)
+    {
+        foreach (byte key in keys) keybd_event(key, 0, 0, UIntPtr.Zero);
+        for (int i = keys.Length - 1; i >= 0; i--) keybd_event(keys[i], 0, 2, UIntPtr.Zero);
+    }
+    public static bool Type(string text)
+    {
+        var inputs = new KeyInput[text.Length * 2];
+        for (int i = 0; i < text.Length; i++)
+        {
+            inputs[2 * i] = new KeyInput { Type = 1, Key = new Key { Scan = text[i], Flags = 4 } };
+            inputs[2 * i + 1] = new KeyInput { Type = 1, Key = new Key { Scan = text[i], Flags = 6 } };
+        }
+        return SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(KeyInput))) == inputs.Length;
+    }
+}
+'@
+$element = [Windows.Automation.AutomationElement]
+$controls = [Windows.Automation.ControlType]
+$terminalWindow = New-Object Windows.Automation.PropertyCondition($element::ClassNameProperty, 'CASCADIA_HOSTING_WINDOW_CLASS')
+$tabItem = New-Object Windows.Automation.PropertyCondition($element::ControlTypeProperty, $controls::TabItem)
+$listItem = New-Object Windows.Automation.PropertyCondition($element::ControlTypeProperty, $controls::ListItem)
+$selection = [Windows.Automation.SelectionItemPattern]::Pattern
+function Answer($text) { [Console]::Out.WriteLine($text); exit 0 }
+function TerminalWindows { $element::RootElement.FindAll('Children', $terminalWindow) }
+function FindTab
+{
+    $marker = 'joint-' + [guid]::NewGuid().ToString('N')
+    for ($try = 0; $try -lt 40; $try++)
+    {
+        [Tab]::SetConsoleTitleW($marker) | Out-Null
+        Start-Sleep -Milliseconds 40
+        foreach ($window in TerminalWindows)
+        {
+            $tabs = $window.FindAll('Descendants', $tabItem)
+            for ($i = 0; $i -lt $tabs.Count; $i++)
+            {
+                if ($tabs[$i].Current.Name -ceq $marker)
+                {
+                    [Tab]::SetConsoleTitleW($title) | Out-Null
+                    return @{ Window = $window; Index = $i; Count = $tabs.Count }
+                }
+            }
+        }
+    }
+    [Tab]::SetConsoleTitleW($title) | Out-Null
+    Answer 'refused its tab was not found by its title (a tab that keeps its own title cannot be found)'
+}
+function SelectedTab($window)
+{
+    $tabs = $window.FindAll('Descendants', $tabItem)
+    for ($i = 0; $i -lt $tabs.Count; $i++) { if ($tabs[$i].GetCurrentPattern($selection).Current.IsSelected) { return $i } }
+    return -1
+}
+function FocusTab($index)
+{
+    $start = New-Object Diagnostics.ProcessStartInfo 'wt.exe'
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.Arguments = "-w 0 focus-tab -t $index"
+    [Diagnostics.Process]::Start($start).WaitForExit()
+}
+[Tab]::FreeConsole() | Out-Null
+if (-not [Tab]::AttachConsole($shell)) { Answer "refused could not attach to the tab's console (process $shell)" }
+$buffer = New-Object Text.StringBuilder 1024
+[Tab]::GetConsoleTitleW($buffer, 1024) | Out-Null
+$title = $buffer.ToString()
+$tab = FindTab
+$handle = [IntPtr]$tab.Window.Current.NativeWindowHandle
+if ($action -eq 'find') { Answer "window $handle $($tab.Count)" }
+$selected = SelectedTab $tab.Window
+# A browser that has just opened can still take the focus back, so the terminal has to stay in front.
+$held = 0
+for ($try = 0; $try -lt 100 -and $held -lt 6; $try++)
+{
+    if ([Tab]::GetForegroundWindow() -eq $handle) { $held++ }
+    else
+    {
+        $held = 0
+        [Tab]::Front($handle)
+    }
+    Start-Sleep -Milliseconds 50
+}
+if ($held -lt 6) { Answer "refused the terminal did not keep the focus ($([Tab]::FrontProcess()) holds it)" }
+FocusTab $tab.Index
+Start-Sleep -Milliseconds 250
+if ((SelectedTab $tab.Window) -ne $tab.Index) { FocusTab $selected; Answer 'refused its tab could not be selected' }
+if ([Tab]::GetForegroundWindow() -ne $handle) { FocusTab $selected; Answer "refused the terminal lost the focus ($([Tab]::FrontProcess()) holds it)" }
+[Tab]::Keys(0x11, 0x10, 0x50)
+$open = $false
+for ($try = 0; $try -lt 20 -and -not $open; $try++)
+{
+    Start-Sleep -Milliseconds 50
+    $open = $element::FocusedElement.Current.ControlType -eq $controls::Edit
+}
+# Without the palette the text would land in the harness's prompt.
+if (-not $open) { FocusTab $selected; Answer 'refused the command palette did not open on Ctrl+Shift+P' }
+function InPalette { [Tab]::GetForegroundWindow() -eq $handle -and $element::FocusedElement.Current.ControlType -eq $controls::Edit }
+function Offered
+{
+    foreach ($item in $tab.Window.FindAll('Descendants', $listItem))
+    {
+        if ($item.GetCurrentPattern($selection).Current.IsSelected) { return $item.Current.Name }
+    }
+    return $null
+}
+$command = 'Move tab to a new window'
+$match = $null
+# The list filters after the typing, and a palette still loading can lose it; the second go replaces what is there.
+for ($attempt = 0; $attempt -lt 2 -and $match -cne $command -and (InPalette); $attempt++)
+{
+    if ($attempt -gt 0) { [Tab]::Keys(0x11, 0x41) }
+    if (-not [Tab]::Type($command)) { break }
+    for ($try = 0; $try -lt 30 -and $match -cne $command; $try++)
+    {
+        Start-Sleep -Milliseconds 50
+        $match = Offered
+    }
+}
+if ($match -cne $command -or -not (InPalette))
+{
+    # Out of the palette, Esc would reach the harness and interrupt it.
+    $palette = InPalette
+    if ($palette)
+    {
+        $typed = $element::FocusedElement.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern).Current.Value
+        [Tab]::Keys(0x1B)
+        Start-Sleep -Milliseconds 300
+    }
+    FocusTab $selected
+    Answer "refused the command palette offered '$match' for '$typed' (focus in the palette: $palette, front process $([Tab]::FrontProcess()); a terminal in another language names the action differently)"
+}
+$before = @(TerminalWindows | ForEach-Object { $_.Current.NativeWindowHandle })
+[Tab]::Keys(0x0D)
+for ($try = 0; $try -lt 60; $try++)
+{
+    Start-Sleep -Milliseconds 100
+    foreach ($window in TerminalWindows)
+    {
+        if ($before -notcontains $window.Current.NativeWindowHandle)
+        {
+            $moved = FindTab
+            if ($moved.Window.Current.NativeWindowHandle -ne $window.Current.NativeWindowHandle) { Answer 'refused the new window does not hold this tab' }
+            Answer "moved $($window.Current.NativeWindowHandle)"
+        }
+    }
+}
+Answer 'refused no new window appeared'
+""";
 
     /// <summary>
     /// A launcher started from inside a Claude session (its ! prefix or Bash tool) inherits that session's markers, and
@@ -560,6 +986,15 @@ class RunJointLauncher
             return windows;
         }
 
+        /// <summary>The window with the focus (_NET_ACTIVE_WINDOW) and its _NET_WM_PID; null when none has it.</summary>
+        public static Window? ActiveWindow()
+        {
+            long[] active = Property(Root, "_NET_ACTIVE_WINDOW");
+            if (active.Length == 0 || active[0] == 0) return null;
+            long[] pid = Property(new IntPtr(active[0]), "_NET_WM_PID");
+            return new Window(new IntPtr(active[0]), pid.Length > 0 ? (int)pid[0] : 0);
+        }
+
         /// <summary>The first window that matches, or null when none appears within WindowWait.</summary>
         public static IntPtr? WaitForWindow(Func<Window, bool> match)
         {
@@ -669,8 +1104,8 @@ class RunJointLauncher
         return args.Length == 0 ? launcher : FromSource ? $"{launcher} -- {args}" : $"{launcher} {args}";
     }
 
-    // The embedded skills write {{launch}} and {{launch --doctor}} for the command that runs the launcher.
-    static string LaunchText(string text) => text.Replace("{{launch --doctor}}", LaunchCommand("--doctor")).Replace("{{launch}}", LaunchCommand());
+    // The embedded skills write {{launch}}, {{launch --doctor}} and {{launch --harness claude}} for the command that runs the launcher.
+    static string LaunchText(string text) => text.Replace("{{launch --doctor}}", LaunchCommand("--doctor")).Replace("{{launch --harness claude}}", LaunchCommand("--harness claude")).Replace("{{launch}}", LaunchCommand());
 
     /// <summary>
     /// Opens a Terminal.app window running the harness on the skill prompt in the workspace, titled and placed through
@@ -740,7 +1175,12 @@ class RunJointLauncher
     /// <summary>Ends a launch that failed after the browser opened: the terminal is opened last, so only the browser is left.</summary>
     static void CloseSession(Process browser)
     {
-        if (!browser.HasExited) browser.Kill(true);
+        lock (browser)   // the console closing and the harness exiting arrive together
+        {
+            if (browser.HasExited) return;
+            browser.Kill(true);
+            browser.WaitForExit();
+        }
     }
 
     /// <summary>
@@ -777,11 +1217,13 @@ class RunJointLauncher
             Check(path != null, $"{h.Name} on PATH{(path != null ? $" ({path})" : "")}",
                 $"{(isWindows ? h.InstallWindows : h.InstallUnix)}, then sign in once by running {h.Command} in a new terminal", required: chosen != null);
             if (path == null) continue;
-            var absent = EmbeddedSkills.Where(s => !SkillInstalled(workspaceDir, h, s)).Select(s => s.Name).ToList();
-            Check(true, absent.Count == 0 ? $"{h.Name} skills in {h.SkillsDir}: {EmbeddedSkillNames()}"
+            var absent = SkillsAbsentFrom(workspaceDir, h);
+            Check(true, absent.Count == 0 ? $"{h.Name} skills in {h.SkillsDir}: {CarriedSkillNames()}"
                 : $"{h.Name} skills in {h.SkillsDir}: the launcher installs {string.Join(", ", absent)} on its next run", "");
         }
         if (chosen == null) Check(Harnesses.Any(h => HarnessPath(h) != null), $"a supported harness installed ({HarnessNames()})", "install one of them (above)");
+        string remote = defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote;
+        Check(true, $"skills folder {FindSkillsFolder()}, SkillsRemote {(remote.Length == 0 ? "(none)" : remote)}", "");
         if (defaults != null)
         {
             foreach (var (name, path) in defaults.Skills)
@@ -790,16 +1232,21 @@ class RunJointLauncher
                 Check(File.Exists(file), $"skill {name} ({file})", $"fix its path in Skills of {DefaultsFileName}, or remove it", required: false);
             }
         }
-        if (isWindows) Check(FindOnPath("wt.exe") != null, "Windows Terminal (wt.exe)", "winget install --id Microsoft.WindowsTerminal -e");
-        if (isMac) Check(FindOnPath("osascript") != null, "osascript (opens Terminal.app)", "part of macOS; check PATH includes /usr/bin");
+        if (chosen != null)
+        {
+            var lost = LostSkills(workspaceDir, chosen, FindSkillsFolder());
+            Check(lost.Count == 0, $"{chosen.Name} skills all at hand", LostSkillsWhy(lost, FindSkillsFolder(), defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote));
+        }
+        if (isWindows) Check(FindOnPath("wt.exe") != null, "Windows Terminal (wt.exe; only --newterminal)", "winget install --id Microsoft.WindowsTerminal -e", required: false);
+        if (isMac) Check(FindOnPath("osascript") != null, "osascript (moves or opens Terminal.app)", "part of macOS; check PATH includes /usr/bin", required: false);
         if (isLinux)
         {
             bool desktop = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY")) || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
             Check(desktop, "a desktop session (DISPLAY or WAYLAND_DISPLAY)", "run the launcher from a terminal on the desktop, not over ssh");
             Check(!IsWayland(), "an X11 session (the windows are placed)", "log in to an X11 session (\"Ubuntu on Xorg\", or xrdp for a remote desktop); on Wayland both windows open unplaced", required: false);
-            Check(LinuxTerminalCommand(workspaceDir, "", "", "") != null, "a terminal: gnome-terminal, konsole, xfce4-terminal or xterm", "sudo apt install gnome-terminal (or xterm)");
+            Check(LinuxTerminalCommand(workspaceDir, "", "", "") != null, "a terminal: gnome-terminal, konsole, xfce4-terminal or xterm (only --newterminal)", "sudo apt install gnome-terminal (or xterm)", required: false);
         }
-        string? browser = FindBrowser(defaults?.Browser ?? InitialDefaults.Browser, out string browserFound);
+        string? browser = FindBrowser(defaults?.DefaultBrowser ?? InitialDefaults.DefaultBrowser, out string browserFound);
         Check(browser != null, browser != null ? $"browser {browser} ({browserFound})" : "a Chromium-based browser", browserFound);
         Check(!PortAnswers(CdpPort), $"port {CdpPort} free (no joint session open)", "close the open session's browser window");
         // The launch's own skill checks on the defaults, once nothing above is missing: Ready means a launch with this
@@ -808,8 +1255,8 @@ class RunJointLauncher
         {
             string startSkill = defaults.DefaultSkill.Length == 0 ? ChooserSkill : defaults.DefaultSkill;
             string? skillFile = SkillFile(workspaceDir, chosen, defaults, startSkill);
-            string? problem = skillFile == null ? $"skill '{startSkill}' is neither embedded ({EmbeddedSkillNames()}) nor configured in Skills of {DefaultsFileName}"
-                : !Array.Exists(EmbeddedSkills, s => s.Name == startSkill) && !File.Exists(skillFile)
+            string? problem = skillFile == null ? $"skill '{startSkill}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {DefaultsFileName}"
+                : !IsCarriedSkill(startSkill) && !File.Exists(skillFile)
                     ? $"skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {DefaultsFileName}"
                 : SkillPrompt(workspaceDir, chosen, skillFile, startSkill, null, out string promptError) == null ? promptError.Replace("Error: ", "")
                 : null;
@@ -833,19 +1280,36 @@ class RunJointLauncher
     /// The defaults file's values, or the initial defaults when the file does not exist yet. A file that exists but
     /// lacks a key, holds a value of the wrong kind or a value a launch would refuse (DefaultHarness not supported,
     /// DefaultPosition or DefaultRatio not one, DefaultSkill neither embedded nor in Skills) is an error naming the key,
-    /// not a silent default, so the doctor reports it before a launch would.
+    /// not a silent default, so the doctor reports it before a launch would. The old key Browser is refused the same way.
     /// </summary>
     static JointDefaults? ReadDefaults(string file, out string error)
     {
         error = "";
-        if (!File.Exists(file)) return InitialDefaults;
         string Fix(string what) => $"Error: {file} {what}; fix it or delete the file to start from the initial defaults.";
+        if (Directory.Exists(file))
+        {
+            error = Fix("is a folder, not a file");
+            return null;
+        }
+        if (!File.Exists(file)) return InitialDefaults;
+        string text;
+        try { text = File.ReadAllText(file); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            error = Fix($"cannot be read ({e.Message})");
+            return null;
+        }
         try
         {
-            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            using var doc = JsonDocument.Parse(text);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
             {
                 error = Fix("is not a JSON object");
+                return null;
+            }
+            if (doc.RootElement.TryGetProperty("Browser", out _))
+            {
+                error = Fix("has Browser: renamed to DefaultBrowser (\"\" is Google Chrome, \"auto\" the search, or a browser's path)");
                 return null;
             }
             var values = new Dictionary<string, string>();
@@ -856,12 +1320,7 @@ class RunJointLauncher
                     error = Fix($"has no string {key}");
                     return null;
                 }
-                values[key] = value.GetString()!.Trim();
-            }
-            if (values["Browser"].Length == 0)
-            {
-                error = Fix("has an empty Browser (use \"auto\" or a browser's path)");
-                return null;
+                values[key] = AsciiTrim(value.GetString()!);
             }
             string harness = values["DefaultHarness"].ToLowerInvariant();
             if (harness.Length > 0 && FindHarness(harness) == null)
@@ -888,21 +1347,36 @@ class RunJointLauncher
             var skills = new Dictionary<string, string>();
             foreach (var skill in skillsElement.EnumerateObject())
             {
-                if (!Regex.IsMatch(skill.Name, "^[a-z0-9]+(-[a-z0-9]+)*$") || Array.Exists(EmbeddedSkills, s => s.Name == skill.Name)
-                    || skill.Value.ValueKind != JsonValueKind.String || skill.Value.GetString()!.Trim().Length == 0)
+                if (!Regex.IsMatch(skill.Name, "^[a-z0-9]+(-[a-z0-9]+)*\\z") || IsCarriedSkill(skill.Name)
+                    || skill.Value.ValueKind != JsonValueKind.String || AsciiTrim(skill.Value.GetString()!).Length == 0)
                 {
-                    error = Fix($"has Skills entry '{skill.Name}': a skill name is lowercase letters, digits and single hyphens, not an embedded skill ({EmbeddedSkillNames()}), with its SKILL.md path as a string");
+                    error = Fix($"has Skills entry '{skill.Name}': a skill name is lowercase letters, digits and single hyphens, not one of the tool's skills ({CarriedSkillNames()}), with its SKILL.md path as a string");
                     return null;
                 }
-                skills[skill.Name] = skill.Value.GetString()!.Trim();
+                skills[skill.Name] = AsciiTrim(skill.Value.GetString()!);
             }
             string defaultSkill = values["DefaultSkill"];
-            if (defaultSkill.Length > 0 && !Array.Exists(EmbeddedSkills, s => s.Name == defaultSkill) && !skills.ContainsKey(defaultSkill))
+            if (defaultSkill.Length > 0 && !IsCarriedSkill(defaultSkill) && !skills.ContainsKey(defaultSkill))
             {
-                error = Fix($"has DefaultSkill '{defaultSkill}' (use \"\", an embedded skill ({EmbeddedSkillNames()}) or a name in Skills)");
+                error = Fix($"has DefaultSkill '{defaultSkill}' (use \"\", one of the tool's skills ({CarriedSkillNames()}) or a name in Skills)");
                 return null;
             }
-            return new JointDefaults(harness, defaultSkill, position, values["DefaultRatio"], skills, values["Browser"]);
+            string skillsRemote = InitialDefaults.SkillsRemote;
+            if (doc.RootElement.TryGetProperty("SkillsRemote", out var remoteElement))
+            {
+                if (remoteElement.ValueKind != JsonValueKind.String)
+                {
+                    error = Fix("has no string SkillsRemote");
+                    return null;
+                }
+                skillsRemote = AsciiTrim(remoteElement.GetString()!);
+            }
+            if (!ValidSkillsRemote(skillsRemote))
+            {
+                error = Fix($"has SkillsRemote '{skillsRemote}' (use \"\" for no download, or an https URL of letters, digits and . _ ~ / -)");
+                return null;
+            }
+            return new JointDefaults(harness, defaultSkill, position, values["DefaultRatio"], skills, values["DefaultBrowser"], skillsRemote);
         }
         catch (JsonException e)
         {
@@ -923,18 +1397,22 @@ class RunJointLauncher
         json.WriteStartObject("Skills");
         foreach (var (name, path) in defaults.Skills) json.WriteString(name, path);
         json.WriteEndObject();
-        json.WriteString("Browser", defaults.Browser);
+        json.WriteString("DefaultBrowser", defaults.DefaultBrowser);
+        json.WriteString("SkillsRemote", defaults.SkillsRemote);
         json.WriteEndObject();
     }
 
     static bool ParseRatio(string text, out int terminalPart, out int browserPart)
     {
         terminalPart = browserPart = 0;
-        var m = Regex.Match(text, @"^\s*(\d{1,2})\s*:\s*(\d{1,2})\s*$");
+        var m = Regex.Match(text, @"^[ \t]*([0-9]{1,2})[ \t]*:[ \t]*([0-9]{1,2})[ \t]*\z");
         return m.Success
             && int.TryParse(m.Groups[1].Value, out terminalPart) && terminalPart > 0
             && int.TryParse(m.Groups[2].Value, out browserPart) && browserPart > 0;
     }
+
+    // Defaults text is read by ASCII rules only: whitespace is space, tab, CR and LF.
+    static string AsciiTrim(string text) => text.Trim(' ', '\t', '\r', '\n');
 
     /// <summary>
     /// Splits the work area between the terminal and the browser: side by side for left:right / right:left, stacked
@@ -966,17 +1444,17 @@ class RunJointLauncher
         ? FindOnPath(harness.Command + ".exe") ?? FindOnPath(harness.Command + ".cmd")
         : FindOnPath(harness.Command);
 
-    static string EmbeddedSkillNames() => string.Join(", ", EmbeddedSkills.Select(s => s.Name));
+    static string CarriedSkillNames() => string.Join(", ", EmbeddedSkills.Select(s => s.Name).Concat(FolderSkills.Select(s => s.Name)));
 
     /// <summary>Where the harness finds the named skill in the launch folder: &lt;SkillsDir&gt;/&lt;name&gt;/SKILL.md.</summary>
     static string HarnessSkillFile(string workspaceDir, Harness harness, string name) =>
         Path.GetFullPath(Path.Combine(workspaceDir, harness.SkillsDir, name, "SKILL.md"));
 
     /// <summary>Whether every file of the embedded skill is in the harness's skills folder.</summary>
-    static bool SkillInstalled(string workspaceDir, Harness harness, JointSkill skill)
+    static bool SkillInstalled(string workspaceDir, Harness harness, string name, IEnumerable<string> files)
     {
-        string dir = Path.GetDirectoryName(HarnessSkillFile(workspaceDir, harness, skill.Name))!;
-        return skill.Files().All(f => File.Exists(Path.Combine(dir, f.Name)));
+        string dir = Path.GetDirectoryName(HarnessSkillFile(workspaceDir, harness, name))!;
+        return files.All(f => File.Exists(Path.Combine(dir, f)));
     }
 
     /// <summary>
@@ -994,29 +1472,79 @@ class RunJointLauncher
         return null;
     }
 
+    static bool IsCarriedSkill(string name) => Array.Exists(EmbeddedSkills, s => s.Name == name) || Array.Exists(FolderSkills, s => s.Name == name);
+
+    /// <summary>The folder the tool runs from: its source's when run from source, else the binary's.</summary>
+    static string ToolDir() => Path.GetDirectoryName(AppContext.GetData("EntryPointFilePath") as string ?? Environment.ProcessPath!)!;
+
     /// <summary>
-    /// Writes each embedded skill the harness's skills folder lacks; a copy already there is the user's and is kept.
-    /// Null, or why a skill could not be written.
+    /// The nearest folder named skills that holds the browser skill, from the tool's own folder upward (the repository's
+    /// sits above every tool, csharp and lean4 alike); with none, the one beside the tool, where the install skill puts
+    /// what it downloads.
     /// </summary>
-    static string? InstallSkills(string workspaceDir, Harness harness)
+    static string FindSkillsFolder()
     {
-        foreach (var skill in EmbeddedSkills)
+        string tool = ToolDir();
+        for (string? dir = tool; dir != null; dir = Path.GetDirectoryName(dir))
+            if (File.Exists(Path.Combine(dir, SkillsFolderName, BrowserSkill, "SKILL.md"))) return Path.Combine(dir, SkillsFolderName);
+        return Path.Combine(tool, SkillsFolderName);
+    }
+
+    /// <summary>Whether the skills folder holds every file of the skill.</summary>
+    static bool FolderHolds(string skillsFolder, FolderSkill skill) => skill.Files.All(f => File.Exists(Path.Combine(skillsFolder, skill.Name, f)));
+
+    /// <summary>The skills, embedded or from the folder, whose files the harness's skills folder lacks.</summary>
+    static List<string> SkillsAbsentFrom(string workspaceDir, Harness harness) =>
+        EmbeddedSkills.Where(s => !SkillInstalled(workspaceDir, harness, s.Name, s.Files().Select(f => f.Name))).Select(s => s.Name)
+            .Concat(FolderSkills.Where(s => !SkillInstalled(workspaceDir, harness, s.Name, s.Files)).Select(s => s.Name)).ToList();
+
+    /// <summary>The folder skills neither the harness's skills folder nor the skills folder holds: no launch can install them.</summary>
+    static List<string> LostSkills(string workspaceDir, Harness harness, string skillsFolder) =>
+        FolderSkills.Where(s => !SkillInstalled(workspaceDir, harness, s.Name, s.Files) && !FolderHolds(skillsFolder, s)).Select(s => s.Name).ToList();
+
+    /// <summary>A skills remote: empty (no download), or an https URL plain enough for the install skill to put on a command line.</summary>
+    static bool ValidSkillsRemote(string text) => text.Length == 0 || Regex.IsMatch(text, @"^https://[A-Za-z0-9._~/-]+\z");
+
+    /// <summary>What is lost and where it comes from, for the doctor and a launch.</summary>
+    static string LostSkillsWhy(IReadOnlyList<string> lost, string skillsFolder, string remote) =>
+        $"{string.Join(", ", lost)} not in {skillsFolder}: " + (remote.Length == 0
+            ? "copy the skills folder that ships with the tool there"
+            : $"{InstallSkill} downloads them from {remote} (SkillsRemote in {DefaultsFileName})");
+
+    /// <summary>
+    /// Writes each skill file the harness's skills folder lacks, an embedded skill's from the tool and a folder skill's from
+    /// skillsFolder; a copy already there is the user's and is kept. Null, or why a file could not be written.
+    /// </summary>
+    static string? InstallSkills(string workspaceDir, Harness harness, string skillsFolder)
+    {
+        string? Write(string skill, string name, Func<string> text)
         {
-            string dir = Path.GetDirectoryName(HarnessSkillFile(workspaceDir, harness, skill.Name))!;
-            foreach (var (name, text) in skill.Files())
+            string dir = Path.GetDirectoryName(HarnessSkillFile(workspaceDir, harness, skill))!;
+            string file = Path.Combine(dir, name);
+            if (File.Exists(file)) return null;
+            try
             {
-                string file = Path.Combine(dir, name);
-                if (File.Exists(file)) continue;
-                try
-                {
-                    Directory.CreateDirectory(dir);
-                    File.WriteAllText(file, LaunchText(text).ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-                {
-                    return $"Error: could not write the {skill.Name} skill's {name} to {file} ({e.Message}); run the launcher from a folder you can write to.";
-                }
-                Console.WriteLine($"[joint-launcher] installed the {skill.Name} skill's {name} for {harness.Name}: {file}");
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(file, LaunchText(text()).ReplaceLineEndings("\n"), new UTF8Encoding(false));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                return $"Error: could not write the {skill} skill's {name} to {file} ({e.Message}); run the launcher from a folder you can write to.";
+            }
+            Console.WriteLine($"[joint-launcher] installed the {skill} skill's {name} for {harness.Name}: {file}");
+            return null;
+        }
+        foreach (var skill in EmbeddedSkills)
+            foreach (var (name, text) in skill.Files())
+                if (Write(skill.Name, name, () => text + "\n") is string error) return error;
+        foreach (var skill in FolderSkills)
+        {
+            if (!FolderHolds(skillsFolder, skill) && !SkillInstalled(workspaceDir, harness, skill.Name, skill.Files))
+                Console.WriteLine($"[joint-launcher] the {skill.Name} skill is not in {skillsFolder}; --doctor says how to get it.");
+            foreach (string name in skill.Files)
+            {
+                string source = Path.Combine(skillsFolder, skill.Name, name);
+                if (File.Exists(source) && Write(skill.Name, name, () => File.ReadAllText(source)) is string error) return error;
             }
         }
         return null;
@@ -1027,7 +1555,7 @@ class RunJointLauncher
     /// one's at its path in Skills; null when it is neither.
     /// </summary>
     static string? SkillFile(string workspaceDir, Harness harness, JointDefaults defaults, string name) =>
-        Array.Exists(EmbeddedSkills, s => s.Name == name) ? HarnessSkillFile(workspaceDir, harness, name)
+        IsCarriedSkill(name) ? HarnessSkillFile(workspaceDir, harness, name)
         : defaults.Skills.TryGetValue(name, out var path) ? Path.GetFullPath(path, workspaceDir) : null;
 
     /// <summary>
@@ -1059,11 +1587,25 @@ class RunJointLauncher
     /// The session cannot open yet: runs the harness in this console on joint-launcher-install, told what is missing,
     /// and returns its exit code. The next launch opens the session once nothing is missing.
     /// </summary>
-    static int Bootstrap(string workspaceDir, Harness harness, string harnessPath, List<string> missing)
+    static int Bootstrap(string workspaceDir, Harness harness, string harnessPath, List<string> missing) =>
+        RunHarnessHere(workspaceDir, harness, harnessPath, $"{harness.SkillPrefix}{InstallSkill} missing {string.Join(" ", missing)}", missing);
+
+    /// <summary>Runs the harness in this console, on the prompt, and returns its exit code.</summary>
+    static int RunHarnessHere(string workspaceDir, Harness harness, string harnessPath, string prompt, List<string> missing)
     {
-        string prompt = $"{harness.SkillPrefix}{InstallSkill} missing {string.Join(" ", missing)}";
-        Console.WriteLine($"[joint-launcher] the session cannot open until that is set up: {harness.Name} starts here on {InstallSkill} to install it. " +
-                          "When it is done, exit it and run the launcher again.");
+        if (missing.Count > 0)
+            Console.WriteLine($"[joint-launcher] the session cannot open until that is set up: {harness.Name} starts here on {InstallSkill} to install it. " +
+                              "When it is done, exit it and run the launcher again.");
+        // Ctrl+C belongs to the harness (it interrupts its turn); the launcher waits for it to exit.
+        Console.CancelKeyPress += (_, e) => e.Cancel = true;
+        using var process = StartHarnessHere(workspaceDir, harness, harnessPath, prompt);
+        process.WaitForExit();
+        return process.ExitCode;
+    }
+
+    /// <summary>Starts the harness on the prompt in this console, a session of its own.</summary>
+    static Process StartHarnessHere(string workspaceDir, Harness harness, string harnessPath, string prompt)
+    {
         ForgetParentClaudeSession();
         // cmd resolves the harness's .exe or .cmd on Windows; elsewhere the harness runs directly.
         var start = new ProcessStartInfo(OperatingSystem.IsWindows() ? "cmd.exe" : harnessPath) { UseShellExecute = false, WorkingDirectory = workspaceDir };
@@ -1073,11 +1615,7 @@ class RunJointLauncher
             start.ArgumentList.Add(harness.Command);
         }
         start.ArgumentList.Add(prompt);
-        // Ctrl+C belongs to the harness (it interrupts its turn); the launcher waits for it to exit.
-        Console.CancelKeyPress += (_, e) => e.Cancel = true;
-        using var process = Process.Start(start) ?? throw new InvalidOperationException($"could not start {harnessPath}");
-        process.WaitForExit();
-        return process.ExitCode;
+        return Process.Start(start) ?? throw new InvalidOperationException($"could not start {harnessPath}");
     }
 
     static bool SafeSkillArgs(string text)
@@ -1104,48 +1642,61 @@ class RunJointLauncher
         Console.WriteLine($"       {LaunchCommand("--doctor [--harness claude|codex|pi]")}");
         Console.WriteLine("""
 
-Opens a joint session and exits: a terminal running an AI harness and a shared Chromium-based browser (DevTools
-protocol on 127.0.0.1:9222) splitting the primary monitor. Copy this one file into any folder (a repository or not)
+Opens a joint session: the terminal it runs in, with its AI harness, and a shared Chromium-based browser (DevTools
+protocol on 127.0.0.1:9222) splitting the primary monitor, and never a second terminal. Inside a harness it opens the
+browser beside that harness and exits; from a plain terminal the harness starts right there. Copy this file and the skills folder into any folder (a repository or not)
 and run it from there, on the desktop (not over ssh): runJointLauncher.cs with the .NET 10 SDK or later, or the
-single-file binary runJointLauncher-<os>-<arch> (e.g. runJointLauncher-win-x64.exe), which needs no .NET. It needs
-nothing else beside it; runJointLauncher.json is created there on the first session.
+single-file binary runJointLauncher-<os>-<arch> (e.g. runJointLauncher-win-x64.exe), which needs no .NET. Nothing else
+is needed; runJointLauncher.json is created there on the first session.
 
   --harness <name>       what the terminal starts, for this run only (never saved): claude, codex or pi; required
                          while DefaultHarness in runJointLauncher.json is empty. It must be installed: the launcher
                          prints its install command when it is not.
   --skill <name>         the skill the harness starts on (default: DefaultSkill; when that is empty too, the harness
-                         starts on joint-launcher, which asks what to do). The launcher carries joint-launcher,
-                         joint-browser (drives the shared browser with Playwright: Node.js and a standard Playwright),
-                         joint-launcher-install and joint-launcher-doctor and writes them to the harness's skills folder
+                         starts on joint-launcher, which asks what to do). joint-launcher and joint-browser
+                         (drives the shared browser with Playwright: Node.js and a standard Playwright) come from
+                         the skills folder beside the launcher or above it, joint-launcher-install and joint-launcher-doctor are embedded;
+                         all are written to the harness's skills folder
                          (.claude/skills, .agents/skills, .pi/skills) when missing, never over a copy already there;
                          other skills are named with their SKILL.md path in Skills of runJointLauncher.json.
   --skillargs "<args>"   the skill's own arguments, e.g. --skill my-review --skillargs "login page".
   --position <t:b>       where the terminal and the browser go: left:right, right:left (side by side) or
                          top:bottom, bottom:top (stacked); the terminal is the first named side.
-  --ratio <t>:<b>        the terminal's share against the browser's along the split, e.g. 1:2, 1:4, 1:5.
+  --ratio <t>:<b>        the terminal's share against the browser's along the split, e.g. 1:2, 1:1. Side by side the
+                         terminal takes at least 1:2: a narrower ratio becomes 1:2. Stacked, any ratio holds, e.g. 1:4.
+  --newterminal          open a terminal of its own running the harness. Without it no second terminal opens: inside a
+                         harness (claude, codex, pi), or started by any other program (input that is no console), that
+                         harness is the session's and the browser opens beside its terminal (--position, --ratio; the
+                         whole work area when that window cannot be moved), so --skill and --skillargs are refused and
+                         --harness is not needed there (from a program it only overrides whose skills folder gets the skills; inside a harness,
+                         another one named starts in a terminal of its own and the caller's stays where it is). From a plain terminal the harness
+                         starts right there, and its exit ends the session.
   --doctor               check every prerequisite and print how to fix what is missing; opens no window.
 
 When something the session needs is missing (a terminal, a browser) but the harness is installed, the launcher starts
 the harness in its own console on joint-launcher-install, told what is missing; run the launcher again once it is
-installed.
+installed. Inside a harness nothing starts: the launcher prints what is missing with its fix and exits 1.
 
 Defaults live in runJointLauncher.json in the folder the launcher runs from (DefaultHarness, DefaultSkill,
-DefaultPosition, DefaultRatio, Skills, Browser; initially "", "", left:right, 1:2, {}, auto). A --skill, --position or
+DefaultPosition, DefaultRatio, Skills, DefaultBrowser; initially "", "", left:right, 1:2, {}, ""). A --skill, --position or
 --ratio given here becomes the new default once the session opens; the rest change only by editing the file. Skills
-maps a skill's name to its SKILL.md path (relative to the launch folder unless absolute); Browser "auto" takes the
-newest Playwright Chromium, else Google Chrome, else Microsoft Edge or Chromium, or name a browser's path.
+maps a skill's name to its SKILL.md path (relative to the launch folder unless absolute); DefaultBrowser "" is Google
+Chrome on every OS (google-chrome on Linux) and nothing else, "auto" takes the newest Playwright Chromium, else Google
+Chrome, else Microsoft Edge or Chromium, or name a browser's path.
 
 Platforms: Windows (Windows Terminal), macOS (Terminal.app; allow it to be controlled when macOS asks) and Linux
 (gnome-terminal, konsole, xfce4-terminal or xterm; the windows are placed on X11, on Wayland both open unplaced).
 
-Writes <local app data>/joint-launcher/session.json (cdp, browserPid, harness, skill) for a skill to attach to. The
-session ends when you close its two windows.
+Writes <local app data>/joint-launcher/session.json (cdp, browserPid, harness, skill, skipHarness) for a skill to
+attach to. The session ends when you close its windows.
 """);
     }
 
-    static string StatusPage(string harnessName, string skillPrompt)
+    static string StatusPage(string harnessName, string skillPrompt, bool skipHarness)
     {
-        string starting = $"    <li>{WebUtility.HtmlEncode(harnessName)} is starting in the terminal on <code>{WebUtility.HtmlEncode(skillPrompt)}</code>.</li>\n";
+        string shared = skipHarness ? "This window is shared with the AI session that opened it" : "This window is shared with the AI session in the terminal";
+        string starting = skipHarness ? $"    <li>Browser-only joint session: attach from your harness with <code>{BrowserSkill}</code> (CDP <code>http://127.0.0.1:{CdpPort}</code>).</li>\n"
+            : $"    <li>{WebUtility.HtmlEncode(harnessName)} is starting in the terminal on <code>{WebUtility.HtmlEncode(skillPrompt)}</code>.</li>\n";
         return """
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Joint session</title>
@@ -1159,7 +1710,9 @@ session ends when you close its two windows.
 </style></head>
 <body>
   <h1>Joint session</h1>
-  <p class="sub">This window is shared with the AI session in the terminal (DevTools protocol on 127.0.0.1:9222).</p>
+  <p class="sub">
+""" + shared + """
+ (DevTools protocol on 127.0.0.1:9222).</p>
   <ol>
 
 """ + starting + """
@@ -1170,18 +1723,30 @@ session ends when you close its two windows.
     }
 
     /// <summary>
-    /// The session's browser: Browser's path, or for "auto" the first found of the newest Playwright Chromium (what a
-    /// Playwright harness installs and launches itself), Google Chrome, then Microsoft Edge or Chromium. Any
-    /// Chromium-based browser serves: the session gives it a profile of its own and the DevTools port. Null with why
-    /// and how to get one; otherwise found says where it came from.
+    /// The session's browser: "" is Google Chrome (google-chrome on Linux) and no search, a path is that browser, and
+    /// "auto" is the first found of the newest Playwright Chromium (what a Playwright harness installs and launches
+    /// itself), Google Chrome, then Microsoft Edge or Chromium. Any Chromium-based browser serves: the session gives it a
+    /// profile of its own and the DevTools port. Null with why and how to get one; otherwise found says where it came from.
     /// </summary>
     static string? FindBrowser(string configured, out string found)
     {
+        if (configured.Length == 0)
+        {
+            string?[] chrome = OperatingSystem.IsLinux() ? new[] { FindOnPath("google-chrome") } : InstalledBrowsers()[0].Candidates;
+            foreach (var candidate in chrome)
+            {
+                if (candidate == null || !File.Exists(candidate)) continue;
+                found = "Google Chrome";
+                return candidate;
+            }
+            found = $"Google Chrome is not installed: {ChromeInstall()}; or set DefaultBrowser in {DefaultsFileName} to \"auto\" or a browser's path";
+            return null;
+        }
         if (configured != "auto")
         {
             string path = Environment.ExpandEnvironmentVariables(configured);
             bool exists = File.Exists(path);
-            found = exists ? $"Browser in {DefaultsFileName}" : $"Browser in {DefaultsFileName} is {path}, which does not exist: fix the path, or set it to \"auto\"";
+            found = exists ? $"DefaultBrowser in {DefaultsFileName}" : $"DefaultBrowser in {DefaultsFileName} is {path}, which does not exist: fix the path, or set it to \"auto\"";
             return exists ? path : null;
         }
         string? playwright = NewestPlaywrightChromium();
@@ -1199,12 +1764,14 @@ session ends when you close its two windows.
                 return candidate;
             }
         }
-        found = "no Chromium-based browser (Playwright Chromium, Google Chrome, Microsoft Edge or Chromium): " +
-                (OperatingSystem.IsWindows() ? "winget install --id Google.Chrome -e" : OperatingSystem.IsMacOS() ? "brew install --cask google-chrome"
-                    : "install Google Chrome's .deb (wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install ./google-chrome-stable_current_amd64.deb)") +
-                $", or with Node.js: npx playwright install chromium; or set Browser in {DefaultsFileName} to a browser's path";
+        found = "no Chromium-based browser (Playwright Chromium, Google Chrome, Microsoft Edge or Chromium): " + ChromeInstall() +
+                $", or with Node.js: npx playwright install chromium; or set DefaultBrowser in {DefaultsFileName} to a browser's path";
         return null;
     }
+
+    /// <summary>This OS's command that installs Google Chrome.</summary>
+    static string ChromeInstall() => OperatingSystem.IsWindows() ? "winget install --id Google.Chrome -e" : OperatingSystem.IsMacOS() ? "brew install --cask google-chrome"
+        : "install Google Chrome's .deb (wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb && sudo apt install ./google-chrome-stable_current_amd64.deb)";
 
     /// <summary>The newest chromium-&lt;revision&gt; build in Playwright's browser cache (PLAYWRIGHT_BROWSERS_PATH, else the OS's default).</summary>
     static string? NewestPlaywrightChromium()
@@ -1270,6 +1837,27 @@ session ends when you close its two windows.
             ("Microsoft Edge", new[] { FindOnPath("microsoft-edge"), FindOnPath("microsoft-edge-stable") }),
             ("Chromium", new[] { FindOnPath("chromium"), FindOnPath("chromium-browser") }),
         };
+    }
+
+    /// <summary>
+    /// Closes the last session's browser when it has no page left: macOS keeps an app running after its last window
+    /// closes, and that browser would hold the port and refuse every later session. The pid must still be a browser on
+    /// this port; any other browser there is left alone, and the launch refuses it.
+    /// </summary>
+    static void CloseWindowlessBrowser(string sessionFile)
+    {
+        if (!File.Exists(sessionFile) || !PortAnswers(CdpPort)) return;
+        using var session = JsonDocument.Parse(File.ReadAllText(sessionFile));
+        int pid = session.RootElement.GetProperty("browserPid").GetInt32();
+        if (!RunTool("ps", new[] { "-o", "command=", "-p", pid.ToString() }, out _).Contains($"--remote-debugging-port={CdpPort}")) return;
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+        using var targets = JsonDocument.Parse(http.GetStringAsync($"http://127.0.0.1:{CdpPort}/json/list").Result);
+        foreach (var target in targets.RootElement.EnumerateArray())
+            if (target.GetProperty("type").GetString() == "page") return;
+        using var browser = Process.GetProcessById(pid);
+        browser.Kill(true);
+        browser.WaitForExit();
+        Console.WriteLine($"[joint-launcher] closed the last session's browser (pid {pid}): its window was closed, but macOS keeps the app running.");
     }
 
     static bool PortAnswers(int port)
@@ -1368,366 +1956,6 @@ session ends when you close its two windows.
     /// </summary>
     private static readonly JointSkill[] EmbeddedSkills =
     {
-        new(BrowserSkill, """
----
-name: joint-browser
-description: Drive the joint session's shared browser (Chromium on DevTools port 127.0.0.1:9222) with Playwright together with the user - open pages, click, fill, read and check what changed - for any web app in any project, including a joint review of a flow (walk it step by step, validate every action, discuss, fix the code, re-run). Use for "drive the browser", "joint browser", "review this page/flow with me", "joint review" when no project-specific review skill applies.
----
-
-# joint-browser
-
-A joint session (started by `runJointLauncher.cs` or `runJointSession.cs`) is this terminal plus a shared
-Chromium-based browser the user watches, with its DevTools protocol on http://127.0.0.1:9222. You drive that window
-with Playwright through `browser.mjs`, the helper beside this SKILL.md (in `.claude/skills/joint-browser/`,
-`.agents/skills/joint-browser/` or `.pi/skills/joint-browser/`): one action per call, each printing a JSON report. It
-attaches to the open window and never launches or closes a browser.
-
-## 0. Ready
-
-1. `node <this folder>/browser.mjs status`. It needs Node.js 20 or later, as Playwright does (`node --version`;
-   install from nodejs.org, `winget install --id OpenJS.NodeJS.LTS -e`, `brew install node`, or on Debian/Ubuntu
-   NodeSource's LTS: `curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt install -y
-   nodejs`; the distro's own `nodejs` can be older, e.g. 18 on Ubuntu 24.04). Ask before installing.
-2. `"playwright": null`: the helper uses the project's own Playwright when the project has one (`playwright` or
-   `playwright-core` in its `node_modules`); otherwise ask the user, then run `node <this folder>/browser.mjs setup`
-   (installs `playwright-core` with npm into `~/.joint-browser/node`; no browser download, the shared one is used).
-3. `"browser": null`: no joint session browser is open; ask the user to start the launcher (or to close whatever else
-   holds port 9222).
-4. Tell the user it is ready and ask what to do, unless the arguments already say it.
-
-## 1. Drive
-
-Do what the user asks, at human pace, in the shared window: they watch every step. The commands
-(`node browser.mjs help` prints all of them with the options):
-
-| Command | Does |
-|---|---|
-| `pages` | the open tabs; `--page <index>` picks one for any command (default: the newest tab) |
-| `goto <url>` / `back` / `forward` / `reload` | navigate |
-| `click`, `dblclick`, `hover`, `check`, `uncheck <selector>` | act on an element |
-| `fill <selector> <text>` / `type <selector> <text>` / `press <key> [selector]` / `select <selector> <value>` / `upload <selector> <file>` | input |
-| `snapshot [selector]` | url, title and the ARIA tree: roles, names, states; read it before choosing a selector |
-| `text`, `attr`, `count <selector>` / `eval <expression>` | read the page |
-| `screenshot <file> [selector]` (`--full`) | a PNG to look at; save it outside the project (a temp or scratch folder) |
-| `wait <selector> [state]` / `console` | wait for an element / listen for console output |
-| `newtab [url]` / `closetab` | tabs (the last tab, the shared window, is never closed) |
-
-Selectors are Playwright's: prefer role and text (`"role=button[name='Sign in']"`, `"text=Forgot password"`) over
-CSS, as a user names things; take the names from `snapshot`. Quote each argument for your shell.
-
-**Every action is validated.** A click that did nothing must not pass silently:
-- Before acting on an element, make sure it is the one meant (`snapshot` / `text`), and the state it acts on is
-  what it should be (a selection, a checked box).
-- Give the action the effect it should have, so the helper asserts it: `--expect-url <part>`, `--expect-text
-  <text>`, `--expect-visible <selector>`, `--expect-hidden <selector>`. `"ok": false` with `expect_failed` = the
-  effect did not happen.
-- Read `"clean"`: console errors and warnings, page errors, unexpected dialogs (dismissed) and failed or 4xx/5xx
-  requests raised by the action are listed; exit code 2. A dialog that IS the effect (a confirm before a delete) is
-  accepted with `--accept-dialog [text]`, reported as `dialogs_accepted`, and fails the action when none appears. Each is a finding to show the user, unless the
-  user agreed it is expected (`--allow <regex>` then stops counting it).
-
-## 2. Joint review
-
-When the user wants to review a page or a flow with you (a sign-up, a checkout, a settings page):
-
-1. **Agree the scope**: the app's URL, the flow and its steps, the account or data to use. If the app is not running,
-   ask how it starts. Look for its own run command in the project (README, AGENTS.md / CLAUDE.md, package.json
-   scripts, a Makefile) and start it only when the user agrees, in the background, with its output in a log file.
-   If the project has its own review skill or test harness for this, say so and offer it; this skill needs none.
-2. **Walk the flow one step at a time**: say what the step will do, do it with its `--expect-*`, report what changed
-   (`snapshot` / `text`, a screenshot when the look matters) and what was raised. Pause for the user's comments
-   before the next step; they may also click in the window themselves, so `snapshot` again before acting after a
-   pause.
-3. **Keep the findings** as you go, in a short list in the conversation (step, what happened, what was expected,
-   evidence: the report lines, a screenshot path). Each finding is an implementation or a test question: ask
-   which.
-4. **Fix with the user**: change the project's code only when the user agrees, rebuild or restart the app the
-   project's way, then re-run the step (and the steps before it when they set it up) and show the result.
-5. **Keep what passed**: when the user wants it, turn the agreed steps into a test in the project's own test setup
-   (its Playwright tests if it has them: the same selectors and expectations), never a test that only passes here.
-
-Nothing else: no server or test starts unless the user agrees, and the shared window stays open for the next step.
-""", "browser.mjs", """
-#!/usr/bin/env node
-// joint-browser: one Playwright action per call on the joint session's shared browser (CDP, default
-// http://127.0.0.1:9222). It attaches to the open window and never launches or closes a browser. Playwright comes from
-// the project (node_modules/playwright or playwright-core under the current folder), else from ~/.joint-browser/node,
-// where `node browser.mjs setup` installs playwright-core with npm. Every action prints a JSON report: what it did, the
-// URL before and after, and every console error, page error, dialog and failed request it raised; --expect-* asserts
-// the action's effect. Exit 0 = ok and clean, 2 = ok but something unexpected was raised, 1 = failed.
-import { createRequire } from 'node:module';
-import { spawnSync } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-
-const PLAYWRIGHT_VERSION = '1.64.0';
-const NODE_DIR = path.join(os.homedir(), '.joint-browser', 'node');
-const MIN_NODE = 20;   // what Playwright requires
-const NODE_INSTALL = 'nodejs.org; winget install --id OpenJS.NodeJS.LTS -e; brew install node; on Debian/Ubuntu ' +
-  'curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash - && sudo apt install -y nodejs (the distro\'s own nodejs can be older)';
-
-const USAGE = `Usage: node browser.mjs <command> [args] [options]
-
-Setup and state:
-  setup                         npm install playwright-core@${PLAYWRIGHT_VERSION} into ${NODE_DIR}
-  status                        where Playwright comes from and whether the browser answers
-  pages                         the open tabs (index, url, title); --page <index> picks one for any command
-Actions (each reports its effect):
-  goto <url>                    navigate
-  click <selector>              click (dblclick, hover, check, uncheck likewise)
-  fill <selector> <text>        replace a field's text
-  type <selector> <text>        type key by key (for fields that react per key)
-  press <key> [selector]        press a key (Enter, Tab, Control+A ...) on the page or an element
-  select <selector> <value>     choose an <option> by value or label
-  upload <selector> <file...>   set files on an <input type=file>
-  back | forward | reload       history and reload
-  newtab [url]                  open a tab (it becomes the newest tab)
-  closetab                      close the chosen tab (--page; the window itself is never closed)
-  wait <selector> [state]       wait until visible (or attached, detached, hidden)
-Reading:
-  snapshot [selector]           url, title and the ARIA tree (roles, names, states) of the page or an element
-  text <selector>               an element's visible text
-  attr <selector> <name>        an attribute's value
-  count <selector>              how many elements match
-  eval <expression>             evaluate JavaScript in the page and print the result
-  screenshot <file> [selector]  save a PNG of the viewport (--full: whole page) or an element
-  console                       console lines and page errors raised while waiting --settle ms
-
-Selectors are Playwright selectors: CSS ("#email", "button.primary"), text ("text=Sign in"), role
-("role=button[name='Sign in']"), label ("internal:label=\\"Email\\"i") or XPath ("xpath=//h1").
-Options:
-  --cdp <url>                   the browser's DevTools endpoint (default: $JOINT_CDP, else http://127.0.0.1:9222)
-  --page <index>                the tab (from 'pages'); default: the newest tab
-  --timeout <ms>                how long an action may wait for its element (default 10000)
-  --settle <ms>                 how long to keep listening after the action (default 700)
-  --expect-url <text>           fail unless the URL then contains the text
-  --expect-text <text>          fail unless the page then shows the text
-  --expect-visible <selector>   fail unless the element is then visible
-  --expect-hidden <selector>    fail unless the element is then hidden or gone
-  --accept-dialog [text]        accept a dialog (alert/confirm/prompt, with the prompt text) instead of dismissing it
-  --allow <regex>               do not count console errors / failed requests whose text matches as unexpected
-  --full                        screenshot: the whole page`;
-
-function parse(argv) {
-  const positional = [];
-  const options = { cdp: process.env.JOINT_CDP || 'http://127.0.0.1:9222', page: null, timeout: 10000, settle: 700, expect: [], acceptDialog: null, allow: null, full: false };
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    const value = () => {
-      if (i + 1 >= argv.length) throw new Error(`${a} needs a value`);
-      return argv[++i];
-    };
-    if (a === '--cdp') options.cdp = value();
-    else if (a === '--page') options.page = Number(value());
-    else if (a === '--timeout') options.timeout = Number(value());
-    else if (a === '--settle') options.settle = Number(value());
-    else if (a === '--expect-url') options.expect.push(['url', value()]);
-    else if (a === '--expect-text') options.expect.push(['text', value()]);
-    else if (a === '--expect-visible') options.expect.push(['visible', value()]);
-    else if (a === '--expect-hidden') options.expect.push(['hidden', value()]);
-    else if (a === '--accept-dialog') options.acceptDialog = i + 1 < argv.length && !argv[i + 1].startsWith('--') ? argv[++i] : '';
-    else if (a === '--allow') options.allow = new RegExp(value());
-    else if (a === '--full') options.full = true;
-    else if (a.startsWith('--')) throw new Error(`unknown option ${a}`);
-    else positional.push(a);
-  }
-  return { command: positional[0], args: positional.slice(1), options };
-}
-
-/** Playwright from the project first (its own install), then from ~/.joint-browser/node; null when neither has it. */
-function loadPlaywright() {
-  for (const base of [process.cwd(), NODE_DIR]) {
-    const require = createRequire(path.join(base, 'joint-browser.cjs'));
-    for (const name of ['playwright', 'playwright-core']) {
-      let file;
-      try { file = require.resolve(name); } catch { continue; }
-      return { playwright: require(file), from: file, version: require(path.join(path.dirname(require.resolve(`${name}/package.json`)), 'package.json')).version };
-    }
-  }
-  return null;
-}
-
-function setup() {
-  fs.mkdirSync(NODE_DIR, { recursive: true });
-  const args = ['install', '--prefix', NODE_DIR, '--no-fund', '--no-audit', `playwright-core@${PLAYWRIGHT_VERSION}`];
-  console.log(`npm ${args.join(' ')}`);
-  // npm is npm.cmd on Windows, which only a shell runs.
-  const result = spawnSync('npm', args, { stdio: 'inherit', shell: process.platform === 'win32' });
-  if (result.error) throw new Error(`npm could not start (${result.error.message}): install Node.js (it brings npm)`);
-  return result.status ?? 1;
-}
-
-async function cdpVersion(cdp) {
-  try {
-    const response = await fetch(new URL('/json/version', cdp), { signal: AbortSignal.timeout(2000) });
-    return response.ok ? await response.json() : null;
-  } catch {
-    return null;
-  }
-}
-
-function print(report) {
-  console.log(JSON.stringify(report, null, 2));
-}
-
-async function main() {
-  const { command, args, options } = parse(process.argv.slice(2));
-  if (!command || command === 'help' || command === '--help') { console.log(USAGE); return 0; }
-  const nodeMajor = Number(process.versions.node.split('.')[0]);
-  if (nodeMajor < MIN_NODE) throw new Error(`Node.js ${process.versions.node} is too old: Playwright needs ${MIN_NODE} or later (${NODE_INSTALL})`);
-  if (command === 'setup') return setup();
-
-  const loaded = loadPlaywright();
-  const browserInfo = await cdpVersion(options.cdp);
-  if (command === 'status') {
-    print({ playwright: loaded ? { from: loaded.from, version: loaded.version } : null, cdp: options.cdp, browser: browserInfo ? browserInfo.Browser : null });
-    return loaded && browserInfo ? 0 : 1;
-  }
-  if (!loaded) throw new Error(`no Playwright: run "node browser.mjs setup" (installs playwright-core into ${NODE_DIR}), or "npm install -D playwright" in the project`);
-  if (!browserInfo) throw new Error(`no browser answers on ${options.cdp}: open the joint session first (it starts the shared browser with --remote-debugging-port=9222)`);
-
-  const browser = await loaded.playwright.chromium.connectOverCDP(options.cdp);
-  const context = browser.contexts()[0];
-  if (!context) throw new Error('the browser has no window to drive');
-  const pages = context.pages();
-
-  if (command === 'pages') {
-    const list = [];
-    for (const [index, p] of pages.entries()) list.push({ index, url: p.url(), title: await p.title() });
-    print({ pages: list });
-    return 0;
-  }
-  if (command === 'newtab') {
-    const opened = await context.newPage();
-    if (args[0]) await opened.goto(args[0], { timeout: options.timeout });
-    await opened.bringToFront();
-    print({ ok: true, action: 'newtab', index: context.pages().indexOf(opened), url: opened.url() });
-    return 0;
-  }
-  if (pages.length === 0) throw new Error('the browser has no open tab (newtab opens one)');
-  if (options.page != null && !(options.page >= 0 && options.page < pages.length)) throw new Error(`--page ${options.page}: the browser has tabs 0-${pages.length - 1}`);
-  const page = pages[options.page ?? pages.length - 1];
-  page.setDefaultTimeout(options.timeout);
-
-  // What the action raises: listened to from before it starts until --settle ms after it ends.
-  const raised = { console_errors: [], page_errors: [], dialogs: [], failed_requests: [] };
-  const allowed = (text) => options.allow != null && options.allow.test(text);
-  page.on('console', (m) => { if ((m.type() === 'error' || m.type() === 'warning') && !allowed(m.text())) raised.console_errors.push(`${m.type()}: ${m.text()}`); });
-  page.on('pageerror', (e) => raised.page_errors.push(String(e.message ?? e)));
-  page.on('requestfailed', (r) => { const t = `${r.method()} ${r.url()} ${r.failure()?.errorText ?? ''}`; if (!allowed(t)) raised.failed_requests.push(t); });
-  page.on('response', (r) => { const t = `${r.status()} ${r.request().method()} ${r.url()}`; if (r.status() >= 400 && !allowed(t)) raised.failed_requests.push(t); });
-  // A dialog the action was told to accept is its expected effect; any other is dismissed and counted.
-  const accepted = [];
-  page.on('dialog', async (d) => {
-    if (options.acceptDialog != null) { accepted.push(`${d.type()}: ${d.message()}`); await d.accept(options.acceptDialog); }
-    else { raised.dialogs.push(`${d.type()}: ${d.message()}`); await d.dismiss(); }
-  });
-
-  const need = (n, what) => { if (args.length < n) throw new Error(`${command} needs ${what}`); };
-  const urlBefore = page.url();
-  let result;
-  switch (command) {
-    case 'goto': need(1, '<url>'); await page.goto(args[0]); break;
-    case 'click': need(1, '<selector>'); await page.locator(args[0]).click(); break;
-    case 'dblclick': need(1, '<selector>'); await page.locator(args[0]).dblclick(); break;
-    case 'hover': need(1, '<selector>'); await page.locator(args[0]).hover(); break;
-    case 'check': need(1, '<selector>'); await page.locator(args[0]).check(); break;
-    case 'uncheck': need(1, '<selector>'); await page.locator(args[0]).uncheck(); break;
-    case 'fill': need(2, '<selector> <text>'); await page.locator(args[0]).fill(args[1]); break;
-    case 'type': need(2, '<selector> <text>'); await page.locator(args[0]).pressSequentially(args[1], { delay: 30 }); break;
-    case 'press': need(1, '<key>'); if (args[1]) await page.locator(args[1]).press(args[0]); else await page.keyboard.press(args[0]); break;
-    case 'select': need(2, '<selector> <value>'); result = await page.locator(args[0]).selectOption(args[1]); break;
-    case 'upload': need(2, '<selector> <file...>'); await page.locator(args[0]).setInputFiles(args.slice(1)); break;
-    case 'back': await page.goBack(); break;
-    case 'forward': await page.goForward(); break;
-    case 'reload': await page.reload(); break;
-    case 'closetab':
-      if (pages.length === 1) throw new Error('closetab would close the last tab and with it the shared window; goto another page instead');
-      await page.close();
-      print({ ok: true, action: 'closetab', closed: urlBefore });
-      return 0;
-    case 'wait': need(1, '<selector>'); await page.locator(args[0]).first().waitFor({ state: args[1] ?? 'visible' }); break;
-    case 'snapshot': result = await page.locator(args[0] ?? 'body').first().ariaSnapshot(); break;
-    case 'text': need(1, '<selector>'); result = await page.locator(args[0]).first().innerText(); break;
-    case 'attr': need(2, '<selector> <name>'); result = await page.locator(args[0]).first().getAttribute(args[1]); break;
-    case 'count': need(1, '<selector>'); result = await page.locator(args[0]).count(); break;
-    case 'eval': need(1, '<expression>'); result = await page.evaluate(args[0]); break;
-    case 'screenshot':
-      need(1, '<file>');
-      if (args[1]) await page.locator(args[1]).first().screenshot({ path: args[0] });
-      else await page.screenshot({ path: args[0], fullPage: options.full });
-      result = path.resolve(args[0]);
-      break;
-    case 'console': break;
-    default: throw new Error(`unknown command '${command}' (node browser.mjs help lists them)`);
-  }
-  // An action that navigates settles here; a page the action closed throws, and the report says so.
-  await page.waitForLoadState('domcontentloaded');
-  await page.waitForTimeout(options.settle);
-
-  const failed = [];
-  for (const [kind, expected] of options.expect) {
-    if (kind === 'url' && !page.url().includes(expected)) failed.push(`url ${page.url()} does not contain ${expected}`);
-    if (kind === 'text' && (await page.getByText(expected).count()) === 0) failed.push(`the page shows no text ${expected}`);
-    if (kind === 'visible' && !(await page.locator(expected).first().isVisible())) failed.push(`${expected} is not visible`);
-    if (kind === 'hidden' && (await page.locator(expected).first().isVisible())) failed.push(`${expected} is still visible`);
-  }
-  if (options.acceptDialog != null && accepted.length === 0) failed.push('--accept-dialog: no dialog appeared');
-  const clean = Object.values(raised).every((list) => list.length === 0);
-  const report = { ok: failed.length === 0, clean, action: [command, ...args].join(' '), url_before: urlBefore, url: page.url(), title: await page.title() };
-  if (failed.length) report.expect_failed = failed;
-  if (accepted.length) report.dialogs_accepted = accepted;
-  if (result !== undefined) report.result = result;
-  for (const [kind, list] of Object.entries(raised)) if (list.length) report[kind] = list;
-  print(report);
-  return failed.length ? 1 : clean ? 0 : 2;
-}
-
-// The connection is dropped by exiting, never by browser.close(): the shared window stays as it is.
-main().then((code) => process.exit(code), (error) => {
-  print({ ok: false, error: String(error.message ?? error).split('\n')[0] });
-  process.exit(1);
-});
-"""),
-        new(ChooserSkill, """
----
-name: joint-launcher
-description: Start a joint session by asking the user what to do - load one of the skills configured in runJointLauncher.json, install the launcher's prerequisites (joint-launcher-install) or troubleshoot them (joint-launcher-doctor) - then do it. The joint-session launcher (runJointLauncher.cs) starts the harness on this skill when no skill is given.
----
-
-# joint-launcher
-
-The user opened a joint session with the launcher (`{{launch}}`, run from this folder): this
-terminal plus a shared browser whose DevTools protocol answers on http://127.0.0.1:9222. Any browser tool that can
-attach to a running Chromium over CDP (e.g. a Playwright MCP server started with `--cdp-endpoint
-http://127.0.0.1:9222`) acts on the window the user watches. The launcher records the session in
-`<local app data>/joint-launcher/session.json` (`cdp`, `harness`, `skill`). No skill was named, so ask what to do,
-then do it.
-
-## 1. Ask
-
-Read `runJointLauncher.json` in this folder (it may not exist yet: then no skills are configured). Its `Skills` object
-maps each configured skill's name to its SKILL.md path (relative to this folder unless absolute). A skill is available
-only while that file exists: check each one, do not assume.
-
-Ask the user to choose (with your question tool if you have one, else as a numbered list): one option per available
-skill (the description from its SKILL.md frontmatter), then `joint-launcher-install` (install or update the
-prerequisites), `joint-launcher-doctor` (check the prerequisites and troubleshoot a launch that went wrong),
-`joint-browser` (drive the shared browser with Playwright, or review a page or flow together) and "something else"
-(the user says what to work on). Name configured skills whose file is missing
-in the question text as "not available", never as options.
-
-## 2. Do it
-
-- A configured skill: read its SKILL.md and follow it from its start; it asks for its own arguments.
-- `joint-browser`, `joint-launcher-install` or `joint-launcher-doctor`: skills beside this one in the same skills
-  folder; load the chosen one and follow it.
-- Something else: do what the user asks, using the shared browser on 127.0.0.1:9222 where it helps.
-
-To skip this question next time, the user passes `--skill <name>` to the launcher (it then becomes `DefaultSkill` in
-`runJointLauncher.json`).
-"""),
         new(InstallSkill, """
 ---
 name: joint-launcher-install
@@ -1738,7 +1966,14 @@ description: Install or update what the joint-session launcher (runJointLauncher
 
 The joint-session launcher (run from this folder with `{{launch}}`) opens
 a terminal running this harness beside a shared Chromium-based browser. When it started you here with the arguments
-`missing <items>`, those items stopped the session from opening (`terminal`, `desktop`, `browser`): start with them.
+`missing <items>`, those items stopped the session from opening (`skills`, `terminal`, `desktop`, `browser`): start with them.
+(Run from a harness, the launcher starts nothing: it prints what is missing and exits.)
+
+`skills`: a skill this launcher takes from its `skills` folder is neither there nor in this harness's skills folder; the
+doctor names that folder. Read `SkillsRemote` in `runJointLauncher.json`. When it is a URL, ask the user, then download
+`<SkillsRemote>/joint-launcher/SKILL.md`, `<SkillsRemote>/joint-browser/SKILL.md` and
+`<SkillsRemote>/joint-browser/browser.mjs` to the same paths under that folder (`curl -fsSL --create-dirs -o <file> <url>`).
+When it is empty nothing is downloaded: the folder ships with the tool, so ask the user to copy it there.
 
 1. Run `{{launch --doctor}}` in this folder and read every `[missing]` and `[optional]` line;
    each names its fix.
@@ -1759,8 +1994,9 @@ a terminal running this harness beside a shared Chromium-based browser. When it 
 | node, playwright (optional, joint-browser) | Node.js 20+: `winget install --id OpenJS.NodeJS.LTS -e`, then `node .claude/skills/joint-browser/browser.mjs setup` (in the harness's skills folder) | `brew install node`, then the same setup | NodeSource's LTS (the distro's own nodejs can be older than 20): `curl -fsSL https://deb.nodesource.com/setup_lts.x \| sudo -E bash - && sudo apt install -y nodejs`, then the same setup |
 | x11-session (optional, window placement) | - | - | log in to an X11 session ("Ubuntu on Xorg"); on Wayland both windows open unplaced |
 
-The browser is chosen by `Browser` in `runJointLauncher.json`: `auto` takes the newest Playwright Chromium, else
-Google Chrome, else Microsoft Edge or Chromium; a path names one. With Node.js, `npx playwright install chromium`
+The browser is chosen by `DefaultBrowser` in `runJointLauncher.json`: `""` is Google Chrome and nothing else (on Linux
+`google-chrome`); `auto` takes the newest Playwright Chromium, else Google Chrome, else Microsoft Edge or Chromium; a
+path names one. With Node.js, `npx playwright install chromium`
 installs Playwright's Chromium. On Ubuntu 23.10+ AppArmor can block the sandbox of a Chromium it has no profile for
 (Playwright's included): if the browser exits at once, use Google Chrome's .deb.
 """),
@@ -1788,7 +2024,9 @@ terminal running this harness beside a shared browser on DevTools port 127.0.0.1
      (typical when launched over ssh); run the launcher from a terminal on the desktop. The launcher closes the
      browser it opened.
    - The browser exits at once on Ubuntu 23.10+: AppArmor can block the sandbox of a Chromium it has no profile for;
-     set `Browser` in `runJointLauncher.json` to Google Chrome.
+     set `DefaultBrowser` in `runJointLauncher.json` to Google Chrome (`""`).
+   - `runJointLauncher.json` "has Browser: renamed to DefaultBrowser": rename the key in the file; `""` is Google
+     Chrome, `auto` the search as before, or a browser's path.
    - `runJointLauncher.json` "has no ..." / "is not valid JSON": fix the named key (the message says what it takes),
      or delete the file to start from the initial defaults.
    - `joint-browser` says `Node.js ... is too old` or `no Playwright`: Playwright needs Node.js 20 or later (the
@@ -1833,6 +2071,8 @@ terminal running this harness beside a shared browser on DevTools port 127.0.0.1
     static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
     [DllImport("user32.dll")]
     static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetConsoleWindow();
     [DllImport("dwmapi.dll")]
     static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect value, int size);
 }
