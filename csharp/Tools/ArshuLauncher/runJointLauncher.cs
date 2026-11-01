@@ -331,7 +331,7 @@ class RunJointLauncher
         if (PortAnswers(CdpPort))
         {
             Console.WriteLine($"Error: 127.0.0.1:{CdpPort} is already in use (a joint session's browser, or another browser started with " +
-                              "--remote-debugging-port, is still open). Close it and relaunch.");
+                              "--remote-debugging-port, is still open). Nothing was started: attach to it, or close it and relaunch.");
             return 1;
         }
 
@@ -557,12 +557,13 @@ class RunJointLauncher
     }
 
     /// <summary>
-    /// The harness this launch runs inside, which is then the session's own: Claude Code marks its children, and any
+    /// The harness this launch runs inside, which is then the session's own: Claude Code and pi mark their children (CLAUDECODE, PI_CODING_AGENT), and any
     /// harness shows in the parent processes by its command (one running on node shows as node, but its tools' input is no console).
     /// </summary>
     static Harness? CallingHarness(List<(int Pid, string Name)> chain)
     {
         if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLAUDECODE"))) return FindHarness("claude");
+        if (Environment.GetEnvironmentVariable("PI_CODING_AGENT") == "true") return FindHarness("pi");
         foreach (var (_, name) in chain)
             if (FindHarness(name) is Harness harness) return harness;
         return null;
@@ -1032,8 +1033,6 @@ Answer 'refused no new window appeared'
         }
 
         public static void Activate(IntPtr window) => Send(window, "_NET_ACTIVE_WINDOW", SourcePager);
-
-        public static void Close(IntPtr window) => Send(window, "_NET_CLOSE_WINDOW", 0 /* now */, SourcePager);
 
         /// <summary>An EWMH request: a client message about the window, sent to the root window where the window manager listens.</summary>
         static void Send(IntPtr window, string type, long l0 = 0, long l1 = 0, long l2 = 0, long l3 = 0, long l4 = 0)
@@ -1978,10 +1977,10 @@ description: Install or update what the joint-session launcher (runJointLauncher
 
 The joint-session launcher (run from this folder with `{{launch}}`) opens
 a terminal running this harness beside a shared Chromium-based browser. When it started you here with the arguments
-`missing <items>`, those items stopped the session from opening (`skills`, `terminal`, `desktop`, `browser`): start with them.
+`missing <items>`, those items stopped the session from opening (`terminal`, `desktop`, `browser`): start with them.
 (Run from a harness, the launcher starts nothing: it prints what is missing and exits.)
 
-`skills`: a skill this launcher takes from its `skills` folder is neither there nor in this harness's skills folder; the
+A lost skill (never an item of `missing`; the doctor prints it as `[optional]`): a skill this launcher takes from its `skills` folder is neither there nor in this harness's skills folder; the
 doctor names that folder. Read `SkillsRemote` in `runJointLauncher.json`. When it is a URL, ask the user, then download
 `<SkillsRemote>/joint-launcher/SKILL.md`, `<SkillsRemote>/joint-browser/SKILL.md` and
 `<SkillsRemote>/joint-browser/browser.mjs` to the same paths under that folder (`curl -fsSL --create-dirs -o <file> <url>`).
