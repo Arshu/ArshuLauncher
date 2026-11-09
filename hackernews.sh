@@ -17,14 +17,12 @@ case "$(uname -m)" in
   *) echo "Unsupported CPU: $(uname -m)"; exit 1 ;;
 esac
 dir="$HOME/AIWork"
-mkdir -p "$dir/skills/joint-browser" "$dir/skills/joint-hackernews" "$dir/ArshuCost"
+mkdir -p "$dir/skills/joint-browser" "$dir/skills/joint-hackernews"
 cd "$dir"
 [ -x runJointLauncher ] || { curl -fsSL "$rel/runJointLauncher-$os-$arch" -o runJointLauncher && chmod +x runJointLauncher; }
 for f in joint-browser/SKILL.md joint-browser/browser.mjs joint-hackernews/SKILL.md joint-hackernews/hn.mjs joint-hackernews/hn-inject.js joint-hackernews/modules.json; do
   curl -fsSL "$base/skills/$f" -o "skills/$f"
 done
-# the AI cost line at the bottom of the page needs .NET 10; without it the page says "cost unavailable"
-curl -fsSL "$base/csharp/Tools/ArshuCost/runJointCost.cs" -o ArshuCost/runJointCost.cs
 [ -f runJointLauncher.json ] || printf '{\n  "DefaultHarness": "claude",\n  "DefaultSkill": "",\n  "DefaultPosition": "left:right",\n  "DefaultRatio": "1:2",\n  "DefaultBrowser": "",\n  "Skills": { "joint-hackernews": "skills/joint-hackernews/SKILL.md" }\n}\n' > runJointLauncher.json
 echo "Folder: $dir"
 # Run from inside an assistant session (or any program whose input is no console, which `curl | sh` is) the launcher refuses --skill:

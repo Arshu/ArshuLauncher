@@ -274,6 +274,6 @@ launcher). In the folder you launch from, add it to `runJointLauncher.json` and 
 ```
 
 Give the path as it is from the folder you launch in. It needs Node.js 20+ and Playwright (the `joint-browser` skill sets
-Playwright up when you ask). The cost line uses `csharp/Tools/ArshuCost/runJointCost.cs` in this repository (needs
-.NET 10 and, for Claude and Codex costs, Node); where it is not found, the page says the cost is unavailable instead of
-showing a number. Options and bookmarks are kept in `~/.joint-hackernews/`.
+Playwright up when you ask). The cost line is read by the launcher itself (the downloaded binary carries the cost reader, `runJointLauncher --cost`;
+for Claude and Codex costs it needs Node). Run from source it uses `csharp/Tools/ArshuCost/runJointCost.cs` (needs .NET 10);
+where no reader is found, the page says the cost is unavailable instead of showing a number. Options and bookmarks are kept in `~/.joint-hackernews/`.

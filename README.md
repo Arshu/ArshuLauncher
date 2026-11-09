@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews
 ```
 
 (Read [hackernews.sh](hackernews.sh) or [hackernews.ps1](hackernews.ps1) first if you like. Pass `codex` or `pi` to
-`sh` for another assistant; on Windows set `$env:HN_HARNESS` first. The cost line needs .NET 10.)
+`sh` for another assistant; on Windows set `$env:HN_HARNESS` first. The AI cost line is built into the launcher: no .NET needed.)
 
 Arshu Launcher opens two windows on your screen with one command:
 
