@@ -16,4 +16,14 @@ foreach ($f in 'joint-browser/SKILL.md', 'joint-browser/browser.mjs', 'joint-hac
 Invoke-WebRequest "$base/csharp/Tools/ArshuCost/runJointCost.cs" -OutFile ArshuCost\runJointCost.cs
 if (-not (Test-Path runJointLauncher.json)) { Set-Content runJointLauncher.json "{`n  `"DefaultHarness`": `"claude`",`n  `"DefaultSkill`": `"`",`n  `"DefaultPosition`": `"left:right`",`n  `"DefaultRatio`": `"1:2`",`n  `"DefaultBrowser`": `"`",`n  `"Skills`": { `"joint-hackernews`": `"skills/joint-hackernews/SKILL.md`" }`n}" }
 "Folder: $dir"
-& .\runJointLauncher.exe --harness $harness --skill joint-hackernews
+# Run from inside an assistant session (or any program whose input is no console) the launcher refuses --skill: open a terminal of its own.
+# The assistant is recognised as the launcher does: Claude Code and pi mark their children, any harness shows in the parent processes.
+$inside = $env:CLAUDECODE -or $env:PI_CODING_AGENT -eq 'true' -or [Console]::IsInputRedirected
+for ($p = $PID; -not $inside -and $p; ) {
+  $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$p"
+  if (-not $proc) { break }
+  if ($proc.Name -match '^(claude|codex|pi)(\.exe)?$') { $inside = $true }
+  $p = $proc.ParentProcessId
+}
+$extra = if ($inside) { @('--newterminal') } else { @() }
+& .\runJointLauncher.exe --harness $harness --skill joint-hackernews @extra

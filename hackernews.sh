@@ -27,4 +27,17 @@ done
 curl -fsSL "$base/csharp/Tools/ArshuCost/runJointCost.cs" -o ArshuCost/runJointCost.cs
 [ -f runJointLauncher.json ] || printf '{\n  "DefaultHarness": "claude",\n  "DefaultSkill": "",\n  "DefaultPosition": "left:right",\n  "DefaultRatio": "1:2",\n  "DefaultBrowser": "",\n  "Skills": { "joint-hackernews": "skills/joint-hackernews/SKILL.md" }\n}\n' > runJointLauncher.json
 echo "Folder: $dir"
+# Run from inside an assistant session (or any program whose input is no console, which `curl | sh` is) the launcher refuses --skill:
+# open a terminal of its own. The assistant is recognised as the launcher does: Claude Code and pi mark their children, any harness
+# shows in the parent processes.
+inside=0
+if [ -n "${CLAUDECODE:-}" ] || [ "${PI_CODING_AGENT:-}" = true ] || [ ! -t 0 ]; then inside=1; fi
+pid=$$
+n=0
+while [ "$inside" = 0 ] && [ "${pid:-0}" -gt 1 ] && [ "$n" -lt 32 ]; do
+  case "$(ps -o comm= -p "$pid" | sed 's#.*/##')" in claude|codex|pi) inside=1 ;; esac
+  pid=$(ps -o ppid= -p "$pid" | tr -d ' ')
+  n=$((n + 1))
+done
+if [ "$inside" = 1 ]; then exec ./runJointLauncher --harness "$harness" --skill joint-hackernews --newterminal; fi
 exec ./runJointLauncher --harness "$harness" --skill joint-hackernews
