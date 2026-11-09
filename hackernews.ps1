@@ -8,7 +8,17 @@ $rel = 'https://github.com/Arshu/ArshuLauncher/releases/latest/download'
 $dir = Join-Path $HOME 'AIWork'
 New-Item -ItemType Directory -Force "$dir\skills\joint-browser", "$dir\skills\joint-hackernews" | Out-Null
 Set-Location $dir
-if (-not (Test-Path runJointLauncher.exe)) { Invoke-WebRequest "$rel/runJointLauncher-win-x64.exe" -OutFile runJointLauncher.exe }
+# The launcher is downloaded when it is missing or is not the latest release's (the release publishes the SHA-256 of each file).
+$asset = 'runJointLauncher-win-x64.exe'
+$want = ((Invoke-RestMethod 'https://api.github.com/repos/Arshu/ArshuLauncher/releases/latest').assets | Where-Object name -eq $asset).digest -replace '^sha256:', ''
+if (-not $want) { throw "the latest release lists no $asset (or no digest for it)" }
+$have = if (Test-Path runJointLauncher.exe) { (Get-FileHash runJointLauncher.exe -Algorithm SHA256).Hash } else { '' }
+if ($have -ne $want) {
+  Invoke-WebRequest "$rel/$asset" -OutFile runJointLauncher.exe.new
+  if ((Get-FileHash runJointLauncher.exe.new -Algorithm SHA256).Hash -ne $want) { throw "the downloaded $asset does not match the release's SHA-256" }
+  # A launcher that is still running keeps its file: close its windows first (this stops, and the old file stays, if it cannot be replaced).
+  Move-Item -Force runJointLauncher.exe.new runJointLauncher.exe
+}
 foreach ($f in 'joint-browser/SKILL.md', 'joint-browser/browser.mjs', 'joint-hackernews/SKILL.md', 'joint-hackernews/hn.mjs', 'joint-hackernews/hn-inject.js', 'joint-hackernews/modules.json') {
   Invoke-WebRequest "$base/skills/$f" -OutFile "skills\$($f.Replace('/', '\'))"
 }

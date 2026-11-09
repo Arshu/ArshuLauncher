@@ -19,7 +19,19 @@ esac
 dir="$HOME/AIWork"
 mkdir -p "$dir/skills/joint-browser" "$dir/skills/joint-hackernews"
 cd "$dir"
-[ -x runJointLauncher ] || { curl -fsSL "$rel/runJointLauncher-$os-$arch" -o runJointLauncher && chmod +x runJointLauncher; }
+# The launcher is downloaded when it is missing or is not the latest release's (the release publishes the SHA-256 of each file).
+asset="runJointLauncher-$os-$arch"
+sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+want=$(curl -fsSL https://api.github.com/repos/Arshu/ArshuLauncher/releases/latest | tr -d ' \n' | sed 's/},{/}\n{/g' | grep "\"name\":\"$asset\"" | sed 's/.*"digest":"sha256:\([0-9a-f]*\)".*/\1/')
+[ -n "$want" ] && [ "${#want}" = 64 ] || { echo "The latest release lists no $asset (or no digest for it)."; exit 1; }
+have=""
+[ -f runJointLauncher ] && have=$(sha256 runJointLauncher)
+if [ "$have" != "$want" ]; then
+  curl -fsSL "$rel/$asset" -o runJointLauncher.new
+  [ "$(sha256 runJointLauncher.new)" = "$want" ] || { echo "The downloaded $asset does not match the release's SHA-256."; rm -f runJointLauncher.new; exit 1; }
+  chmod +x runJointLauncher.new
+  mv -f runJointLauncher.new runJointLauncher
+fi
 for f in joint-browser/SKILL.md joint-browser/browser.mjs joint-hackernews/SKILL.md joint-hackernews/hn.mjs joint-hackernews/hn-inject.js joint-hackernews/modules.json; do
   curl -fsSL "$base/skills/$f" -o "skills/$f"
 done
