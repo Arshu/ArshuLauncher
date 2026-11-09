@@ -3,8 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Arshu Launcher</title>
-<meta name="description" content="Work side by side with an AI assistant and watch everything it does in a shared browser. One command opens a terminal and a browser, arranged on your screen. Windows, Mac and Linux. Free and open source (MIT).">
+<title>Arshu Launcher: pair-test any website with your AI assistant</title>
+<meta name="description" content="Pair-test any website with your AI assistant. One command opens a terminal and a browser side by side, and you watch every click. Works with Claude Code, Codex and pi. Windows 11, macOS, Ubuntu. Free and open source (MIT).">
+<link rel="canonical" href="https://launcher.arshucs.com/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Arshu Launcher">
+<meta property="og:title" content="Arshu Launcher: pair-test any website with your AI assistant">
+<meta property="og:description" content="One command opens a terminal and a browser side by side, and you watch every click. Free, open source, works with Claude Code, Codex and pi.">
+<meta property="og:url" content="https://launcher.arshucs.com/">
+<meta property="og:image" content="https://launcher.arshucs.com/assets/social-hn.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Arshu Launcher: pair-test any website with your AI assistant">
+<meta name="twitter:description" content="One command opens a terminal and a browser side by side, and you watch every click.">
+<meta name="twitter:image" content="https://launcher.arshucs.com/assets/social-hn.png">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23c2410c'/%3E%3Crect x='6' y='8' width='8' height='16' rx='2' fill='%23fff'/%3E%3Crect x='16' y='8' width='10' height='16' rx='2' fill='%23fff' opacity='.7'/%3E%3C/svg%3E">
 <style>
   :root {
@@ -67,6 +80,22 @@
   .screen { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px;
             box-shadow: 0 20px 50px -24px rgba(60, 30, 10, .35); }
   .screen svg { display: block; width: 100%; height: auto; }
+
+  .costline { margin: 0 0 18px; font-size: 16px; }
+  .costline b { color: var(--ok); }
+  .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .badges img { height: 20px; display: block; }
+  .tag { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin: 0 0 10px; }
+  .compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .compare .card h3 { font-size: 17px; }
+  .quick { border: 2px solid var(--accent); }
+  .screen img.demo { display: block; width: 100%; height: auto; border-radius: 8px; background: var(--term); }
+  .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px; margin: 0 0 30px; counter-reset: shot; }
+  .shots figure { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
+  .shots img { display: block; width: 100%; height: auto; border-radius: 8px; background: var(--term); }
+  .shots figcaption { padding: 10px 6px 4px; font-size: 15px; color: var(--muted); }
+  .shots figcaption b { color: var(--ink); display: block; }
+  .shots figcaption b::before { counter-increment: shot; content: counter(shot) ". "; color: var(--accent); }
 
   section { padding: 56px 0; border-top: 1px solid var(--line); }
   section h2 { font-size: clamp(26px, 3.4vw, 34px); margin: 0 0 8px; letter-spacing: -0.01em; }
@@ -138,7 +167,10 @@
       Arshu Launcher
     </a>
     <nav class="links">
+      <a href="#demo">Hacker News demo</a>
       <a href="#start">Get started</a>
+      <a href="#compare">Compared</a>
+      <a href="https://github.com/Arshu/ArshuLauncher/blob/main/docs/RECIPES.md">Recipes</a>
       <a href="#features">Features</a>
       <a href="#faq">Questions</a>
       <a href="https://github.com/Arshu/ArshuLauncher">GitHub</a>
@@ -147,59 +179,72 @@
 
   <div class="hero">
     <div>
-      <h1>Work side by side with an AI assistant, and <em>watch</em> it work.</h1>
-      <p class="lead">One command opens your AI assistant in a terminal and a browser you both share, neatly arranged on your
-        screen. Ask it to open a page, fill a form or check your website, and you see every step happen.</p>
+      <p class="tag">AI browser pair-testing</p>
+      <h1>Pair-test any website with your <em>AI assistant</em>.</h1>
+      <p class="lead">One command opens a terminal and a browser side by side, and you watch every click. Try it on Hacker News
+        first: the assistant sorts the front page into topics while you read, and the page shows what it costs. Then point it at your own site.</p>
+      <p class="costline"><b>Launcher: free.</b> Works with the Claude Code, Codex or pi you already have (the assistant may need its own account).</p>
       <div class="cta">
-        <a class="btn primary" href="#start">Get started, free</a>
-        <a class="btn ghost" href="https://github.com/Arshu/ArshuLauncher">View on GitHub</a>
+        <a class="btn primary" href="#demo">Try it on Hacker News</a>
+        <a class="btn ghost" href="#start">Install step by step</a>
+        <a class="btn ghost" href="https://github.com/Arshu/ArshuLauncher">GitHub</a>
       </div>
       <div class="pills">
-        <span class="pill">Windows · Mac · Linux</span>
+        <span class="pill">Windows 11 · macOS · Ubuntu</span>
         <span class="pill">Claude Code · Codex · pi</span>
         <span class="pill">Open source (MIT)</span>
       </div>
+      <div class="badges">
+        <a href="https://github.com/Arshu/ArshuLauncher/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Arshu/ArshuLauncher?label=release"></a>
+        <a href="https://github.com/Arshu/ArshuLauncher/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/Arshu/ArshuLauncher?style=flat"></a>
+        <a href="https://github.com/Arshu/ArshuLauncher/commits/main"><img alt="Last updated" src="https://img.shields.io/github/last-commit/Arshu/ArshuLauncher?label=last%20updated"></a>
+      </div>
     </div>
-    <div class="screen" role="img" aria-label="A terminal on the left where you chat with the assistant, and a shared browser on the right showing a sign-up form being filled in">
-      <svg viewBox="0 0 520 330" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif">
-        <rect x="0" y="0" width="520" height="330" rx="10" fill="var(--code)"/>
-        <!-- terminal -->
-        <rect x="10" y="10" width="170" height="310" rx="8" fill="var(--term)"/>
-        <circle cx="24" cy="24" r="4" fill="#ef4444"/><circle cx="37" cy="24" r="4" fill="#f59e0b"/><circle cx="50" cy="24" r="4" fill="#22c55e"/>
-        <text x="22" y="56" fill="#fdba74" font-size="11" font-family="ui-monospace, monospace">&gt; Check the sign-up</text>
-        <text x="22" y="71" fill="#fdba74" font-size="11" font-family="ui-monospace, monospace">  page with me</text>
-        <text x="22" y="100" fill="var(--term-ink)" font-size="11" font-family="ui-monospace, monospace">Opening the page…</text>
-        <text x="22" y="118" fill="var(--term-ink)" font-size="11" font-family="ui-monospace, monospace">Filling the email…</text>
-        <text x="22" y="136" fill="var(--term-ink)" font-size="11" font-family="ui-monospace, monospace">Clicking Create…</text>
-        <text x="22" y="160" fill="#4ade80" font-size="11" font-family="ui-monospace, monospace">✓ Account created</text>
-        <text x="22" y="178" fill="#4ade80" font-size="11" font-family="ui-monospace, monospace">✓ No errors</text>
-        <rect x="22" y="196" width="7" height="13" fill="var(--term-ink)" opacity=".8"/>
-        <!-- browser -->
-        <rect x="190" y="10" width="320" height="310" rx="8" fill="var(--surface)" stroke="var(--line)"/>
-        <rect x="190" y="10" width="320" height="34" rx="8" fill="var(--line)" opacity=".55"/>
-        <rect x="205" y="20" width="230" height="14" rx="7" fill="var(--surface)"/>
-        <text x="214" y="31" fill="var(--muted)" font-size="9.5">example.com/sign-up</text>
-        <text x="225" y="84" fill="var(--ink)" font-size="20" font-weight="700">Sign up</text>
-        <text x="225" y="112" fill="var(--muted)" font-size="11">Email</text>
-        <rect x="225" y="119" width="250" height="30" rx="6" fill="var(--surface)" stroke="var(--accent)" stroke-width="1.5"/>
-        <text x="235" y="138" fill="var(--ink)" font-size="12">ann@example.com</text>
-        <text x="225" y="170" fill="var(--muted)" font-size="11">Password</text>
-        <rect x="225" y="177" width="250" height="30" rx="6" fill="var(--surface)" stroke="var(--line)"/>
-        <text x="235" y="197" fill="var(--ink)" font-size="12">••••••••</text>
-        <rect x="225" y="223" width="130" height="34" rx="17" fill="var(--accent)"/>
-        <text x="290" y="244" fill="var(--accent-ink)" font-size="12.5" font-weight="700" text-anchor="middle">Create account</text>
-        <!-- pointer -->
-        <path d="M335 238 l0 22 l6 -6 l5 10 l4 -2 l-5 -10 l8 0 z" fill="var(--ink)" stroke="var(--surface)" stroke-width="1.5"/>
-        <text x="350" y="300" fill="var(--muted)" font-size="10.5" text-anchor="middle">You watch, or click yourself</text>
-      </svg>
+    <div class="screen">
+      <img class="demo" src="assets/hn-5-grouping.gif" width="900" height="506" alt="A recording: in the terminal on the left the assistant is asked to group the Hacker News front page by topic and lists the groups; in the shared browser on the right the page shows the topic badges and the AI cost at the bottom." fetchpriority="high">
     </div>
   </div>
 </div>
 
+<section id="demo">
+  <div class="wrap">
+    <h2>Try it on Hacker News</h2>
+    <p class="sub">The quickest way to see what this does. One command downloads the launcher and a read-only Hacker News skill, and opens a terminal and a browser side by side. You click around news.ycombinator.com; the assistant adds topic tabs, shows fast risers and high-karma submitters, collapses near-duplicate comments and can summarise a thread. It never posts, replies or votes, and the AI cost of the session stays on screen.</p>
+    <div class="shots">
+      <figure><a href="assets/hn-1-launch.gif" title="Open the full-size recording"><img src="assets/hn-1-launch.gif" width="900" height="506" loading="lazy" alt="A recording of the launcher opening a terminal running the assistant on the left and a browser window on the right."></a><figcaption><b>One command opens two windows</b>A terminal with your assistant on the left, a shared browser on the right.</figcaption></figure>
+      <figure><a href="assets/hn-2-picker.gif" title="Open the full-size recording"><img src="assets/hn-2-picker.gif" width="900" height="506" loading="lazy" alt="A recording of the assistant asking how you use Hacker News and offering Reader, Contributor, Maker and Researcher."></a><figcaption><b>Answer a few questions</b>How you use Hacker News and how much the assistant may read. Pick with the arrow keys.</figcaption></figure>
+      <figure><a href="assets/hn-3-opens.gif" title="Open the full-size recording"><img src="assets/hn-3-opens.gif" width="900" height="506" loading="lazy" alt="A recording of Hacker News opening in the shared browser with topic badges and a cost bar."></a><figcaption><b>Hacker News opens with the options on</b>Topic badges, fast risers, a dock tab, and the AI cost at the bottom of the page.</figcaption></figure>
+      <figure><a href="assets/hn-5-grouping.gif" title="Open the full-size recording"><img src="assets/hn-5-grouping.gif" width="900" height="506" loading="lazy" alt="A recording of the prompt Group the front page by topic being typed and the assistant listing the groups."></a><figcaption><b>Ask in plain words</b>Group the front page by topic: you watch it work and see what it costs.</figcaption></figure>
+      <figure><a href="assets/hn-6-grouped-page.gif" title="Open the full-size recording"><img src="assets/hn-6-grouped-page.gif" width="720" height="405" loading="lazy" alt="A recording of the Hacker News page scrolling with the topic groups shown on the stories."></a><figcaption><b>The page follows</b>The groups show on the stories as you scroll.</figcaption></figure>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Your computer">
+      <button role="tab" data-os-tab="windows" aria-selected="true">Windows</button>
+      <button role="tab" data-os-tab="mac" aria-selected="false">Mac</button>
+      <button role="tab" data-os-tab="linux" aria-selected="false">Linux</button>
+    </div>
+    <div class="step quick">
+      <p>Needs your assistant (Claude Code shown) installed and signed in, Chrome or Edge, and Node.js 20+. Not sure? Start with <a href="#start">the install steps</a>. The command installs nothing else, and works in a folder of its own: <code>Documents/AIWork</code>.</p>
+      <div data-os-only="windows"><div class="cmd"><pre>irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.ps1 | iex</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="mac"><div class="cmd"><pre>curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="linux"><div class="cmd"><pre>curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh</pre><button data-copy>Copy</button></div></div>
+      <p class="note">Read the script first if you like: <a href="https://github.com/Arshu/ArshuLauncher/blob/main/hackernews.sh">hackernews.sh</a>, <a href="https://github.com/Arshu/ArshuLauncher/blob/main/hackernews.ps1">hackernews.ps1</a>. For Codex or pi, pass <code>codex</code> or <code>pi</code> (Windows: set <code>$env:HN_HARNESS</code> first). The cost line needs .NET 10; without it the page says the cost is unavailable.</p>
+    </div>
+    <p class="sub" style="margin-top:22px">Then say, for example:</p>
+    <div class="say">
+      <div>“I'm a reader: set up the dock for skimming.”</div>
+      <div>“Group today's front page by topic.”</div>
+      <div>“Summarise this thread and label the arguments.”</div>
+      <div>“Which stories are rising fastest?”</div>
+    </div>
+    <p class="note" style="margin-top:16px">Testing your own site instead? See <a href="#start">Get started</a> and <a href="https://github.com/Arshu/ArshuLauncher/blob/main/docs/RECIPES.md">the recipes</a>.</p>
+  </div>
+</section>
+
 <section id="start">
   <div class="wrap">
-    <h2>Get started in 3 steps</h2>
-    <p class="sub">No programming needed. You type a few commands into a terminal, once. Pick your computer:</p>
+    <h2>Get started</h2>
+    <p class="sub">For developers and QA people: you paste a few commands into a terminal, once. Tested on Windows 11, macOS and
+      Ubuntu; Windows 10 has not been tested. Pick your computer:</p>
 
     <div class="tabs" role="tablist" aria-label="Your computer">
       <button role="tab" data-os-tab="windows" aria-selected="true">Windows</button>
@@ -207,7 +252,18 @@
       <button role="tab" data-os-tab="linux" aria-selected="false">Linux</button>
     </div>
 
-    <div class="steps">
+    <div class="step quick">
+      <h3 style="counter-increment:none">One line</h3>
+      <p>With your assistant installed and signed in, Chrome or Edge, and Node.js 20+, paste this. It makes a work folder, downloads the launcher and starts it. Missing something? <code>--doctor</code> names it and the fix.</p>
+      <div data-os-only="windows"><div class="cmd"><pre>mkdir $HOME\Documents\AIWork -Force; cd $HOME\Documents\AIWork; iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe; .\runJointLauncher.exe --harness claude</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="mac"><div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m | sed s/x86_64/x64/) -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="linux"><div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
+      <p class="note">Use <code>--harness codex</code> or <code>--harness pi</code> for those assistants. The launcher itself installs nothing.</p>
+    </div>
+
+    <details style="margin-top:18px">
+    <summary>First time? Install the prerequisites step by step</summary>
+    <div class="steps" style="margin-top:14px">
       <div class="step">
         <h3>Open a terminal</h3>
         <p>A terminal is a window where you type commands. Type (or paste) a command, then press <b>Enter</b>.</p>
@@ -227,7 +283,7 @@
         <div data-os-only="windows">
           <div class="cmd"><pre>irm https://claude.ai/install.ps1 | iex</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>winget install --id OpenJS.NodeJS.LTS -e</pre><button data-copy>Copy</button></div>
-          <p class="note">Microsoft Edge is already on Windows. Windows 10: also <code>winget install --id Microsoft.WindowsTerminal -e</code>.</p>
+          <p class="note">Microsoft Edge is already on Windows. Windows 10 is untested; if you try it, also <code>winget install --id Microsoft.WindowsTerminal -e</code>.</p>
         </div>
         <div data-os-only="mac">
           <p class="note">These use <a href="https://brew.sh">Homebrew</a>; install it first if you don't have it.</p>
@@ -266,6 +322,7 @@
           The full guide is in <a href="https://github.com/Arshu/ArshuLauncher/blob/main/docs/USAGE.md">USAGE.md</a>.</p>
       </div>
     </div>
+    </details>
   </div>
 </section>
 
@@ -278,6 +335,18 @@
       <div>“Walk me through the sign-up on my site, one step at a time.”</div>
       <div>“Fill the contact form with test data and check the thank-you message appears.”</div>
       <div>“Review the checkout page with me and list anything that looks broken.”</div>
+    </div>
+    <p class="note" style="margin-top:16px">More prompts to copy: <a href="https://github.com/Arshu/ArshuLauncher/blob/main/docs/RECIPES.md">the recipes</a>.</p>
+  </div>
+</section>
+
+<section id="compare">
+  <div class="wrap">
+    <h2>How it is different</h2>
+    <p class="sub">The first question developers ask, answered in a line each.</p>
+    <div class="compare">
+      <div class="card"><h3>Playwright MCP, Browser Use</h3><p>They give an assistant a browser to drive on its own, usually out of sight. Arshu Launcher is the pairing: terminal and a visible browser side by side, a shared window you can click in, and a review workflow. It uses Playwright underneath.</p></div>
+      <div class="card"><h3>Claude in Chrome</h3><p>Works inside your everyday Chrome and its sign-ins. Arshu Launcher starts a fresh, empty browser profile each session, and also works with Codex and pi.</p></div>
     </div>
   </div>
 </section>
@@ -326,12 +395,12 @@
     <h2>Questions</h2>
     <p class="sub">More answers, and fixes for common problems, in <a href="https://github.com/Arshu/ArshuLauncher/blob/main/docs/USAGE.md#if-something-goes-wrong">USAGE.md</a>.</p>
     <details>
-      <summary>Do I need to know how to program?</summary>
-      <p>No. You copy a few commands into a terminal once, then you talk to the assistant in plain words.</p>
+      <summary>Who is it for?</summary>
+      <p>Developers and QA people who want to watch an AI assistant test or review a website. You paste a few commands into a terminal once, then you talk to the assistant in plain words.</p>
     </details>
     <details>
       <summary>Is it free?</summary>
-      <p>The launcher is free and open source under the MIT license. The AI assistant you use may need its own account or subscription.</p>
+      <p>The launcher is free and open source under the MIT license. It works with the Claude Code, Codex or pi you already have; that assistant may need its own account or subscription, which the launcher does not add to.</p>
     </details>
     <details>
       <summary>Can the assistant see my passwords or browsing history?</summary>
@@ -346,6 +415,14 @@
       <p>Close the two windows. Nothing keeps running in the background.</p>
     </details>
     <details>
+      <summary>Which computers does it work on?</summary>
+      <p>Tested on Windows 11, macOS and Ubuntu Linux. Windows 10 has not been tested, so it is unknown whether it works.</p>
+    </details>
+    <details>
+      <summary>Where do I ask a question or report a problem?</summary>
+      <p>In <a href="https://github.com/Arshu/ArshuLauncher/issues">GitHub Issues</a>. Run <code>./runJointLauncher --doctor</code> first and paste what it prints.</p>
+    </details>
+    <details>
       <summary>Something didn't work. What now?</summary>
       <p>Run <code>./runJointLauncher --doctor</code>. It names each problem and how to fix it. Most problems come from a terminal opened before an install: open a new one.</p>
     </details>
@@ -354,7 +431,7 @@
 
 <footer>
   <div class="wrap row">
-    <span>Arshu Launcher · MIT License © 2026 Sridharan Srinivasan · <a href="https://github.com/Arshu/ArshuLauncher">GitHub</a></span>
+    <span>Arshu Launcher · MIT License © 2026 Sridharan Srinivasan · <a href="https://github.com/Arshu/ArshuLauncher">GitHub</a> · <a href="https://github.com/Arshu/ArshuLauncher/releases">Releases</a> · <a href="https://github.com/Arshu/ArshuLauncher/issues">Support</a></span>
     <button class="theme" data-theme-toggle>Toggle dark / light</button>
   </div>
 </footer>

@@ -81,7 +81,15 @@ when a session starts:
 "Skills": { "my-review": ".claude/skills/my-review/SKILL.md" }
 ```
 
+## 9. Browse Hacker News together (optional)
+
+`skills/joint-hackernews` adds options to news.ycombinator.com in the shared browser (topic groups, high-karma
+submitters, bookmarks, thread summaries) and always shows what the session costs. It is read-only: it never posts,
+replies or votes. See [USAGE.md](USAGE.md#optional-skills).
+
 ## Good to know
+
+- **Tested on** Windows 11, macOS and Ubuntu Linux. Windows 10 has not been tested.
 
 - **Linux with Wayland:** both windows open, but Wayland doesn't let apps arrange windows, so you place them
   yourself (or log in with an X11 session such as "Ubuntu on Xorg").

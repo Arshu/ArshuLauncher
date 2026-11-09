@@ -1,0 +1,68 @@
+{
+  "modules": {
+    "look": {
+      "title": "Look and comments",
+      "about": "dark theme, wide layout, comment indent guides, OP highlight, collapse near-duplicates",
+      "status": "ready",
+      "set": { "visual.theme": "dark", "visual.width": "wide", "discussion.indentGuides": true, "discussion.highlightOp": true, "discussion.repeats": true },
+      "off": { "visual.theme": "default", "visual.width": "normal", "discussion.indentGuides": false, "discussion.highlightOp": false, "discussion.repeats": false }
+    },
+    "triage": {
+      "title": "Triage the front page",
+      "about": "high-karma submitters, topic groups, velocity, dim opened stories, mute, alerts, article and thread summaries",
+      "status": "ready",
+      "set": { "list.karma.on": true, "list.velocity": true, "list.seen": true, "list.newMarks": true, "list.classifier": "keywords+claude" },
+      "off": { "list.karma.on": false, "list.velocity": false, "list.seen": false, "list.newMarks": false, "list.classifier": "off" }
+    },
+    "bookmarks": {
+      "title": "Bookmarks",
+      "about": "stars on stories and comments, tags, notes, Markdown digest",
+      "status": "ready",
+      "set": {},
+      "off": {}
+    },
+    "opportunities": {
+      "title": "Worth joining",
+      "about": "early threads with few comments, and Ask HN nobody has answered, in your topic groups",
+      "status": "ready",
+      "set": {},
+      "off": {}
+    },
+    "research": {
+      "title": "Research",
+      "about": "topic trends, mention tracking, pain-point mining (planned)",
+      "status": "planned"
+    },
+    "jobs": {
+      "title": "Who is hiring",
+      "about": "filters for the monthly hiring threads: keywords, remote, location (planned)",
+      "status": "planned"
+    }
+  },
+  "personas": {
+    "reader": {
+      "title": "Reader",
+      "about": "Skims the front page for an hour or two and rarely replies.",
+      "modules": ["triage", "look", "bookmarks"],
+      "budget": "frugal"
+    },
+    "contributor": {
+      "title": "Contributor",
+      "about": "Joins discussions and looks for threads worth joining.",
+      "modules": ["triage", "look", "opportunities"],
+      "budget": "balanced"
+    },
+    "maker": {
+      "title": "Maker",
+      "about": "Posted a Show HN or a link and keeps its favourite threads.",
+      "modules": ["look", "bookmarks"],
+      "budget": "balanced"
+    },
+    "researcher": {
+      "title": "Researcher / curator",
+      "about": "Collects and writes up what Hacker News says about topics.",
+      "modules": ["bookmarks", "triage", "look"],
+      "budget": "balanced"
+    }
+  }
+}

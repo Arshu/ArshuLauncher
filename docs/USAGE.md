@@ -67,7 +67,7 @@ Or download it from https://nodejs.org (choose **LTS**).
 
 ### 1d. Windows only: Windows Terminal
 
-Windows 11 already has it. On Windows 10: `winget install --id Microsoft.WindowsTerminal -e`
+Windows 11 already has it. Windows 10 has not been tested; if you try it: `winget install --id Microsoft.WindowsTerminal -e`
 
 ---
 
@@ -230,7 +230,8 @@ First run the check: `./runJointLauncher --doctor`. It names every problem and h
   "DefaultPosition": "left:right",
   "DefaultRatio": "1:2",
   "Skills": {},
-  "Browser": "auto"
+  "DefaultBrowser": "auto",
+  "SkillsRemote": "https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/skills"
 }
 ```
 
@@ -240,10 +241,39 @@ First run the check: `./runJointLauncher --doctor`. It names every problem and h
 | `DefaultSkill` | what to start on (empty = the assistant asks); `--skill <name>` sets it |
 | `DefaultPosition` / `DefaultRatio` | the layout; `--position` and `--ratio` set them |
 | `Skills` | your own assistant skills: a name and the path of its `SKILL.md` |
-| `Browser` | `auto` (finds Chrome, Edge or Chromium), or the full path of the browser to use |
+| `DefaultBrowser` | `auto` (finds Chrome, Edge or Chromium), empty (Google Chrome), or the full path of the browser to use |
+| `SkillsRemote` | where a missing built-in skill is downloaded from (empty = never download) |
 
 If the file gets broken, delete it: the next session creates a fresh one.
 
 The launcher writes its skills into your folder (`.claude/skills`, `.agents/skills` or `.pi/skills`) and **never
 overwrites** them. To get an updated copy after downloading a newer launcher, delete those `joint-…` folders and
 start a session again.
+
+## Optional skills
+
+### Browse Hacker News together: `joint-hackernews`
+
+A read-only skill that opens news.ycombinator.com in the shared browser and adds options to the pages you visit (a dock,
+topic groups, high-karma submitters, comment indent guides, collapsing near-duplicate comments, bookmarks, thread
+summaries). It never posts, replies, votes or submits. The AI cost of the session is shown at the bottom of the page.
+
+**Quickest:** `curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh` (Mac, Linux) or `irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.ps1 | iex` (Windows
+PowerShell) downloads the launcher, this skill and `joint-browser` into `Documents/AIWork`, writes the `Skills` entry
+below if there is no `runJointLauncher.json` yet, and starts on the skill. The manual way follows.
+
+It lives in this repository in `skills/joint-hackernews/`, so use it from a clone (or keep that folder next to the
+launcher). In the folder you launch from, add it to `runJointLauncher.json` and start on it:
+
+```json
+"Skills": { "joint-hackernews": "skills/joint-hackernews/SKILL.md" }
+```
+
+```
+./runJointLauncher --harness claude --skill joint-hackernews
+```
+
+Give the path as it is from the folder you launch in. It needs Node.js 20+ and Playwright (the `joint-browser` skill sets
+Playwright up when you ask). The cost line uses `csharp/Tools/ArshuCost/runJointCost.cs` in this repository (needs
+.NET 10 and, for Claude and Codex costs, Node); where it is not found, the page says the cost is unavailable instead of
+showing a number. Options and bookmarks are kept in `~/.joint-hackernews/`.
