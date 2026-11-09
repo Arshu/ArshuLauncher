@@ -7,3 +7,7 @@ runJointLauncher.json
 # The maintainer build tool and its output (not published)
 runJointBuild.cs
 dist/
+
+# Session files of a launch from this folder: the shared browser profile (history, bookmarks, logins), the session record, the cost log
+.joint/
+.joint-cost/
