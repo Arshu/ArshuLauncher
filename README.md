@@ -34,9 +34,8 @@ What you will see (each recording is real, at the speed it happened):
 | | |
 |---|---|
 | 1. One command opens two windows | ![launch](assets/hn-1-launch.gif) |
-| 2. Answer a few questions | ![questions](assets/hn-2-picker.gif) |
-| 3. Hacker News opens with the options on | ![opens](assets/hn-3-opens.gif) |
-| 4. The page follows your request | ![grouped page](assets/hn-6-grouped-page.gif) |
+| 2. Answer a few questions, Hacker News opens with the options on | ![questions, then the page opens](assets/hn-2-questions-opens.gif) |
+| 3. The page follows your request | ![grouped page](assets/hn-6-grouped-page.gif) |
 
 Windows (PowerShell):
 
