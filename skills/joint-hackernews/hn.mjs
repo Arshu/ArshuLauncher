@@ -140,6 +140,27 @@ function findCostReader() {
   return null;
 }
 
+// `dotnet run` of the reader script rebuilds the exe it caches for that file, which Windows refuses while a copy of it runs (the
+// launcher's cost watcher is one), and the page then shows the cost as unavailable. So the skill runs a reader of its own: the script
+// is copied into a folder of its own and built there once per source (a changed script builds again), and that exe is what runs.
+async function builtCostReader(script) {
+  const hash = crypto.createHash('sha256').update(fs.readFileSync(script)).digest('hex').slice(0, 12);
+  const dir = path.join(os.tmpdir(), 'joint-cost-reader', `hn-${hash}`);
+  const exe = path.join(dir, 'bin', path.basename(script, '.cs') + (process.platform === 'win32' ? '.exe' : ''));
+  if (fs.existsSync(exe)) return exe;
+  fs.mkdirSync(dir, { recursive: true });
+  const copy = path.join(dir, path.basename(script));
+  fs.copyFileSync(script, copy);
+  await new Promise((resolve, reject) => {
+    const p = spawn('dotnet', ['build', copy, '-c', 'Release', '-o', path.join(dir, 'bin')], { windowsHide: true });
+    let out = '';
+    p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (out += d));
+    p.on('error', (e) => reject(new Error('cannot start dotnet: ' + e.message)));
+    p.on('close', (code) => (code === 0 && fs.existsSync(exe) ? resolve() : reject(new Error(('building the cost reader failed: ' + (out.split('\n').find((l) => l.includes(': error ')) || out.trim().split('\n')[0] || `dotnet exited ${code}`)).slice(0, 300)))));
+  });
+  return exe;
+}
+
 async function serve() {
   fs.mkdirSync(HOME, { recursive: true });
   const pw = loadPlaywright();
@@ -309,8 +330,9 @@ async function serve() {
     // this skill's own harness (the folder it lives in), so another harness's old sessions cannot break the number
     const harness = HERE.includes(`${path.sep}.agents${path.sep}`) ? 'codex' : HERE.includes(`${path.sep}.pi${path.sep}`) ? 'pi' : 'claude';
     const readerArgs = ['--folder', process.cwd(), '--harness', harness, '--json', '--no-snapshot'];
-    const script = /\.cs$/i.test(reader);   // the script runs with dotnet; a tool binary carries the reader behind --cost
-    const p = spawn(script ? 'dotnet' : reader, script ? ['run', reader, '--', ...readerArgs] : ['--cost', ...readerArgs], { windowsHide: true });
+    const script = /\.cs$/i.test(reader);   // the script is built once into a folder of its own (builtCostReader); a tool binary carries the reader behind --cost
+    (script ? builtCostReader(reader) : Promise.resolve(reader)).then((exe) => {
+    const p = spawn(exe, script ? readerArgs : ['--cost', ...readerArgs], { windowsHide: true });
     let out = '', err = '';
     const timer = setTimeout(() => p.kill(), 120000);
     p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
@@ -328,6 +350,7 @@ async function serve() {
         done({ error: ((out + err).trim().split('\n')[0] || `cost reader exited ${code}`).slice(0, 300) });
       }
     });
+    }, (e) => done({ error: e.message }));
   });
 
   // ---- personas and modules: data, not code (modules.json beside this file, the user's own in personas.json). A module is a
