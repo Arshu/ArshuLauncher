@@ -17,9 +17,11 @@ using System.Threading;
 /// A one-shot, command-line launcher for a joint session: a terminal running an AI harness (claude, codex or pi) and a
 /// shared Chromium-based browser splitting the primary monitor's work area (side by side or stacked, in a chosen
 /// ratio), with the DevTools protocol on 127.0.0.1:9222 so the harness's browser tools act on the window the user
-/// watches. It opens both windows and exits: no panel, no capture, no background process. The terminal starts the
+/// watches. It opens both windows and exits: no panel, no capture, no background process.
+/// The terminal starts the
 /// harness on a skill (--skill, else DefaultSkill, else joint-launcher, which asks what to do; --skillargs is the
-/// skill's own arguments).
+/// skill's own arguments). --group names the session group the launch is tracked in (default Default): the cost
+/// reader (runJointCost.cs) totals every session of a group, whatever launch started it.
 ///
 /// Repository-independent: copy this file and the skills folder into any folder (a repository or not) on Windows,
 /// macOS or Linux and run it from there with .NET 10+. It needs no package. runJointBuild.cs compiles it to the
@@ -43,14 +45,14 @@ using System.Threading;
 /// --harness, --skill, --position and --ratio, Skills and DefaultBrowser; a --skill, --position or --ratio given on the command
 /// line becomes the new default once the session opens.
 ///
-/// The session records where its browser is (&lt;local app data&gt;/joint-launcher/session.json: cdp, harness, skill,
+/// The session records where its browser is (&lt;working folder&gt;/.joint/joint-launcher/session.json: cdp, harness, skill,
 /// skipHarness) for a skill to attach to.
 ///
 /// Platforms (run it from the desktop session, not over ssh): Windows (Windows Terminal, Win32 placement), macOS
 /// (Terminal.app through AppleScript, the browser placed by its window flags) and Linux (gnome-terminal, konsole,
 /// xfce4-terminal or xterm; on X11 both windows are placed through libX11, on Wayland both open unplaced).
 ///
-/// Usage: dotnet run csharp/Tools/ArshuLauncher/runJointLauncher.cs -- (or runJointLauncher-&lt;os&gt;-&lt;arch&gt;) [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
+/// Usage: dotnet run csharp/ArshuLauncher/runJointLauncher.cs -- (or runJointLauncher-&lt;os&gt;-&lt;arch&gt;) [--harness claude|codex|pi] [--skill <name>] [--skillargs "<args>"]
 ///        [--position left:right|right:left|top:bottom|bottom:top] [--ratio 1:4]
 /// </summary>
 class RunJointLauncher
@@ -107,6 +109,8 @@ class RunJointLauncher
     private const string ChooserSkill = "joint-launcher";
     // The skill a bootstrap starts on (the harness in the launcher's console) when the session cannot open yet.
     private const string InstallSkill = "joint-launcher-install";
+    // The session group a launch is tracked in when --group names none (the cost reader's DefaultGroup).
+    private const string DefaultGroup = "Default";
     private const string DoctorSkill = "joint-launcher-doctor";
     // Drives the shared browser with Playwright (its helper browser.mjs beside SKILL.md); the same skill in runJointSession.cs.
     private const string BrowserSkill = "joint-browser";
@@ -128,7 +132,12 @@ class RunJointLauncher
 
     static int Main(string[] args)
     {
-        string? harnessName = null, skillName = null, skillArgs = null, position = null, ratio = null;
+#if EMBEDDED_COST
+        // The NativeAOT binary carries the cost reader (runJointBuildAST.cs compiles runJointCost.cs into it): --cost runs it, so the
+        // watcher and the joint skills need no script and no .NET. The script form of this tool has no such mode.
+        if (args.Length > 0 && args[0] == "--cost") return RunJointCost.Launch(args[1..]);
+#endif
+        string? harnessName = null, skillName = null, skillArgs = null, position = null, ratio = null, groupName = null;
         bool doctor = false, newTerminal = false;
         for (int i = 0; i < args.Length; i++)
         {
@@ -136,11 +145,21 @@ class RunJointLauncher
             if (a is "--help" or "-h") { PrintUsage(); return 0; }
             if (a == "--doctor") doctor = true;
             else if (a == "--newterminal") newTerminal = true;
-            else if (a == "--harness" && i + 1 < args.Length) harnessName = args[++i].ToLowerInvariant();
-            else if (a == "--skill" && i + 1 < args.Length) skillName = args[++i];
-            else if (a == "--skillargs" && i + 1 < args.Length) skillArgs = args[++i].Trim();
-            else if (a == "--position" && i + 1 < args.Length) position = args[++i].ToLowerInvariant();
-            else if (a == "--ratio" && i + 1 < args.Length) ratio = args[++i];
+            else if (a is "--harness" or "--skill" or "--skillargs" or "--position" or "--ratio" or "--group")
+            {
+                if (++i >= args.Length)
+                {
+                    Console.WriteLine($"Error: {a} needs a value.");
+                    PrintUsage();
+                    return 1;
+                }
+                if (a == "--harness") harnessName = args[i].ToLowerInvariant();
+                else if (a == "--skill") skillName = args[i];
+                else if (a == "--skillargs") skillArgs = args[i].Trim();
+                else if (a == "--position") position = args[i].ToLowerInvariant();
+                else if (a == "--group") groupName = args[i].Trim();
+                else ratio = args[i];
+            }
             else
             {
                 Console.WriteLine($"Error: unknown argument '{a}'.");
@@ -157,15 +176,25 @@ class RunJointLauncher
         // Inside a harness nothing needs saying, so no arguments open the session; anywhere else they print the usage.
         if (args.Length == 0 && caller == null) { PrintUsage(); return 0; }
         bool skipHarness = !doctor && !newTerminal && (caller != null || Console.IsInputRedirected);
-        if (skipHarness && (skillName != null || skillArgs != null))
+        if (skipHarness && (skillName != null || skillArgs != null || groupName != null))
         {
             Console.WriteLine(caller != null
-                ? $"Error: this runs inside {caller.Name}, which is the session's harness, so --skill and --skillargs have nothing to start; load the skill here, or pass --newterminal for a terminal of its own."
-                : "Error: a program started this, so it starts no harness and --skill and --skillargs have nothing to start; pass --newterminal for a terminal of its own.");
+                ? $"Error: this runs inside {caller.Name}, which is the session's harness, so --skill, --skillargs and --group have nothing to start or record; load the skill here, or pass --newterminal for a terminal of its own."
+                : "Error: a program started this, so it starts no harness and --skill, --skillargs and --group have nothing to start or record; pass --newterminal for a terminal of its own.");
             return 1;
         }
+        if (groupName != null && !Regex.IsMatch(groupName, @"^[A-Za-z0-9 ._&+-]{1,40}\z"))
+        {
+            Console.WriteLine($"Error: --group '{groupName}' is not a session group name: 1-40 ASCII letters, digits, spaces or . _ & + -.");
+            return 1;
+        }
+        groupName ??= DefaultGroup;
 
         var workspaceDir = Directory.GetCurrentDirectory();
+        // The harness and the joint skills it runs (the browser's cost bar) find the cost reader through this variable (the script
+        // runJointCost.cs, or this binary when it carries the reader): they run in the user's folder, which seldom holds it, while
+        // the launcher knows where it is.
+        if (FindCostReader() is string costReader) Environment.SetEnvironmentVariable("JOINT_COST_READER", costReader);
         string defaultsFile = Path.Combine(workspaceDir, DefaultsFileName);
         if (doctor) return Doctor(workspaceDir, defaultsFile, harnessName);
         JointDefaults? defaults = ReadDefaults(defaultsFile, out string defaultsError);
@@ -226,6 +255,20 @@ class RunJointLauncher
                               $"then sign in once by running {harness.Command} in a NEW terminal, and run the launcher again from there.");
             return 1;
         }
+        // The start skill is named before anything is written, so a refused name leaves no skills folder behind.
+        string startSkill = "", skillPrompt = "", title = "", skillNotice = "";
+        string? skillFile = null;
+        if (!skipHarness)
+        {
+            // No skill starts the harness on joint-launcher, which asks the user which skill to load.
+            startSkill = skillName.Length == 0 ? ChooserSkill : skillName;
+            skillFile = SkillFile(workspaceDir, harness!, defaults, startSkill);
+            if (skillFile == null)
+            {
+                Console.WriteLine($"Error: {UnknownSkill(startSkill, defaultsFile, defaults)}.");
+                return 1;
+            }
+        }
         // 3. The embedded skills in the harness's skills folder (a copy already there is kept).
         if (harness != null)
         {
@@ -238,19 +281,9 @@ class RunJointLauncher
         }
         else Console.WriteLine($"[joint-launcher] no harness named: the skills step is skipped (--harness {HarnessNames()} installs {BrowserSkill} for the calling session).");
 
-        string startSkill = "", skillPrompt = "", title = "";
         if (!skipHarness)
         {
-            // No skill starts the harness on joint-launcher, which asks the user which skill to load.
-            startSkill = skillName.Length == 0 ? ChooserSkill : skillName;
-            string? skillFile = SkillFile(workspaceDir, harness!, defaults, startSkill);
-            if (skillFile == null)
-            {
-                Console.WriteLine($"Error: skill '{startSkill}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {defaultsFile}" +
-                                  $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}.");
-                return 1;
-            }
-            if (!IsCarriedSkill(startSkill) && !File.Exists(skillFile))
+            if (!IsCarriedSkill(startSkill) && !File.Exists(skillFile!))
             {
                 Console.WriteLine($"Error: skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {defaultsFile}.");
                 return 1;
@@ -269,12 +302,14 @@ class RunJointLauncher
             if (lostSkills.Contains(startSkill))
             {
                 // A skill is not required: the terminal and the browser are useful without one, so the harness starts plain.
-                Console.WriteLine($"[joint-launcher] no skill: {LostSkillsWhy(lostSkills, FindSkillsFolder(), defaults.SkillsRemote)}; {harness!.Name} starts without {startSkill}.");
+                // The harness takes over this terminal at once, so the browser's status page says it too.
+                skillNotice = $"no skill: {LostSkillsWhy(lostSkills, FindSkillsFolder(), defaults.SkillsRemote)}; {harness!.Name} starts without {startSkill}.";
+                Console.WriteLine("[joint-launcher] " + skillNotice);
                 title = "Joint session";
             }
             else
             {
-                string? prompt = SkillPrompt(workspaceDir, harness!, skillFile, startSkill, skillArgs, out string promptError);
+                string? prompt = SkillPrompt(workspaceDir, harness!, skillFile!, startSkill, skillArgs, out string promptError);
                 if (prompt == null)
                 {
                     Console.WriteLine(promptError);
@@ -321,10 +356,18 @@ class RunJointLauncher
         else Console.WriteLine($"[joint-launcher] browser: {foundBrowser} ({browserFound})");
 
         if (missing.Count > 0)
-            return skipHarness ? 1 : Bootstrap(workspaceDir, harness!, harnessPath!, missing);
+        {
+            if (skipHarness) return 1;
+            if (RecordLaunch(harness!.Name, InstallSkill, workspaceDir, groupName) is { } bootstrapLedgerError)
+            {
+                Console.WriteLine(bootstrapLedgerError);
+                return 1;
+            }
+            return Bootstrap(workspaceDir, harness, harnessPath!, missing);
+        }
         string chrome = foundBrowser!;   // nothing is missing past the bootstrap
 
-        string deskDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "joint-launcher");
+        string deskDir = SessionFolder("joint-launcher");
         string profileDir = Path.Combine(deskDir, "profile");
         string sessionFile = Path.Combine(deskDir, "session.json");
         if (isMac) CloseWindowlessBrowser(sessionFile);
@@ -342,7 +385,7 @@ class RunJointLauncher
             if (Directory.Exists(profileDir)) Directory.Delete(profileDir, true);
             Directory.CreateDirectory(profileDir);
             // Until the harness navigates the window it shows what to do next instead of a blank page.
-            File.WriteAllText(statusPage, StatusPage(harness?.Name ?? "", skillPrompt, skipHarness), new UTF8Encoding(false));
+            File.WriteAllText(statusPage, WithSkillNotice(StatusPage(harness?.Name ?? "", skillPrompt, skipHarness), skillNotice), new UTF8Encoding(false));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -431,6 +474,12 @@ class RunJointLauncher
         }
 
         MoveCaller();
+        if (!skipHarness && RecordLaunch(harness!.Name, skillPrompt.Length == 0 ? "" : startSkill, workspaceDir, groupName) is { } ledgerError)
+        {
+            Console.WriteLine(ledgerError);
+            CloseSession(browser);
+            return 1;
+        }
         if (opensTerminal)
         {
             // The terminal runs the harness as a session of its own, not as a child of a Claude that ran this launcher.
@@ -447,6 +496,7 @@ class RunJointLauncher
         }
 
         WriteSession(sessionFile, browser.Id, profileDir, workspaceDir, harness?.Name ?? "", startSkill, skipHarness);
+        StartCostBar(workspaceDir, harness?.Name);
         // Only an opened session makes its command-line choices the defaults, so a refused run changes nothing.
         // A run that starts no harness does not create the file.
         if (defaultsChanged || (!skipHarness && !File.Exists(defaultsFile)))
@@ -468,6 +518,7 @@ class RunJointLauncher
             using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => CloseSession(browser));
             int exitCode = RunHarnessHere(workspaceDir, harness, harnessPath!, skillPrompt, new List<string>());
             CloseSession(browser);
+            RemoveSessionFile(sessionFile);
             return exitCode;
         }
         Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} {OnSkill(skillPrompt)}");
@@ -508,6 +559,13 @@ class RunJointLauncher
         return null;
     }
 
+    /// <summary>Removes the session file when this tool ends its session: a file left behind names a session that has ended.</summary>
+    static void RemoveSessionFile(string sessionFile)
+    {
+        try { File.Delete(sessionFile); }
+        catch (IOException e) { Console.WriteLine($"[joint-launcher] {sessionFile} stays behind: {e.Message}"); }
+    }
+
     static void WriteSession(string sessionFile, int browserPid, string profileDir, string workspaceDir, string harness, string skill, bool skipHarness)
     {
         using var stream = File.Create(sessionFile);
@@ -523,6 +581,86 @@ class RunJointLauncher
         json.WriteString("startedUtc", DateTime.UtcNow.ToString("o"));
         json.WriteEndObject();
     }
+
+    /// <summary>
+    /// Appends one line to the launch ledger (.joint-cost/launches.jsonl in the workspace folder) for the harness about
+    /// to start, then starts the cost reader's watcher on that folder, detached. Null, or the error naming the file and the cause.
+    /// </summary>
+    static string? RecordLaunch(string harness, string skill, string workspaceDir, string group)
+    {
+        string dir = Path.Combine(workspaceDir, ".joint-cost");
+        string ledger = Path.Combine(dir, "launches.jsonl");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            using var stream = new FileStream(ledger, FileMode.Append, FileAccess.Write);
+            using (var json = new Utf8JsonWriter(stream))
+            {
+                json.WriteStartObject();
+                json.WriteString("startUtc", DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", System.Globalization.CultureInfo.InvariantCulture));
+                json.WriteString("kind", "Launcher");
+                json.WriteString("tool", "runJointLauncher");
+                json.WriteString("harness", harness);
+                json.WriteString("folder", workspaceDir);
+                json.WriteString("skill", skill);
+                json.WriteString("group", group);
+                json.WriteEndObject();
+            }
+            stream.WriteByte((byte)'\n');
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return $"Error: cannot append to the launch ledger {ledger} ({e.Message}).";
+        }
+        if (FindCostReader() is not string reader)
+        {
+            Console.WriteLine($"[joint-cost] {CostReaderMissing}");
+            return null;
+        }
+        // The watcher outlives this tool and holds none of its streams; it is not waited for.
+        var (readerFile, args) = CostCommand(reader, "--watch", "--folder", workspaceDir, "--harness", harness);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                var start = new ProcessStartInfo(readerFile) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden };
+                foreach (var arg in args) start.ArgumentList.Add(arg);
+                Process.Start(start)?.Dispose();
+            }
+            else StartDetached(readerFile, args, "/dev/null").Dispose();
+        }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return $"Error: cannot start the cost reader {reader} ({e.Message}).";
+        }
+        return null;
+    }
+
+    private const string CostReaderMissing = "runJointCost.cs not found beside this tool: this session's cost is not captured";
+
+    /// <summary>How the reader runs: "dotnet run runJointCost.cs -- args" for the script, "&lt;binary&gt; --cost args" for the reader
+    /// a binary carries. The two ways to ship this tool stay independent: the script needs the .cs beside it (or in ../ArshuCost)
+    /// and the binary needs nothing.</summary>
+    static (string File, List<string> Args) CostCommand(string reader, params string[] args)
+    {
+        bool script = reader.EndsWith(".cs", StringComparison.OrdinalIgnoreCase);
+        var list = script ? new List<string> { "run", reader, "--" } : new List<string> { "--cost" };
+        list.AddRange(args);
+        return (script ? "dotnet" : reader, list);
+    }
+
+#if EMBEDDED_COST
+    /// <summary>The binary itself: the cost reader is compiled into it.</summary>
+    static string? FindCostReader() => Environment.ProcessPath;
+#else
+    /// <summary>The cost reader (runJointCost.cs) beside this tool, else in ../ArshuCost; null when neither has it.</summary>
+    static string? FindCostReader()
+    {
+        foreach (var candidate in new[] { Path.Combine(ToolDir(), "runJointCost.cs"), Path.Combine(ToolDir(), "..", "ArshuCost", "runJointCost.cs") })
+            if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+        return null;
+    }
+#endif
 
     /// <summary>The processes this one runs under, nearest first (itself included): pid and lowercase name without extension.</summary>
     static List<(int Pid, string Name)> ParentChain()
@@ -616,7 +754,14 @@ class RunJointLauncher
                 if (tab[2] == "1") return area => { Place(window, area); return null; };
                 return area =>
                 {
+                    // A refusal over the focus or the palette leaves the tab as it was, and the focus is often only taken for a
+                    // moment (the browser that just opened, Explorer), so those are tried again; the others are final.
                     string[] moved = TerminalTab("move", shell);
+                    for (int attempt = 1; attempt < 4 && moved[0] != "moved" && (moved[1].Contains("focus") || moved[1].Contains("palette") || moved[1].Contains("could not be selected")); attempt++)
+                    {
+                        Thread.Sleep(500);
+                        moved = TerminalTab("move", shell);
+                    }
                     if (moved[0] != "moved") return $"this tab stays in its window: {moved[1]}";
                     Place((IntPtr)long.Parse(moved[1]), area);
                     return null;
@@ -1232,6 +1377,8 @@ Answer 'refused no new window appeared'
         if (chosen == null) Check(Harnesses.Any(h => HarnessPath(h) != null), $"a supported harness installed ({HarnessNames()})", "install one of them (above)");
         string remote = defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote;
         Check(true, $"skills folder {FindSkillsFolder()}, SkillsRemote {(remote.Length == 0 ? "(none)" : remote)}", "");
+        string? costReader = FindCostReader();
+        Check(costReader != null, costReader != null ? $"cost reader {costReader}" : CostReaderMissing, "copy runJointCost.cs beside the tool", required: false);
         if (defaults != null)
         {
             foreach (var (name, path) in defaults.Skills)
@@ -1263,7 +1410,7 @@ Answer 'refused no new window appeared'
         {
             string startSkill = defaults.DefaultSkill.Length == 0 ? ChooserSkill : defaults.DefaultSkill;
             string? skillFile = SkillFile(workspaceDir, chosen, defaults, startSkill);
-            string? problem = skillFile == null ? $"skill '{startSkill}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {DefaultsFileName}"
+            string? problem = skillFile == null ? UnknownSkill(startSkill, DefaultsFileName, defaults)
                 : !IsCarriedSkill(startSkill) && !File.Exists(skillFile)
                     ? $"skill '{startSkill}' is configured at {skillFile}, which does not exist; fix its path in Skills of {DefaultsFileName}"
                 : SkillPrompt(workspaceDir, chosen, skillFile, startSkill, null, out string promptError) == null ? promptError.Replace("Error: ", "")
@@ -1386,7 +1533,7 @@ Answer 'refused no new window appeared'
             }
             return new JointDefaults(harness, defaultSkill, position, values["DefaultRatio"], skills, values["DefaultBrowser"], skillsRemote);
         }
-        catch (JsonException e)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)   // GetString() throws the latter on a lone surrogate escape
         {
             error = Fix($"is not valid JSON ({e.Message})");
             return null;
@@ -1432,7 +1579,7 @@ Answer 'refused no new window appeared'
         bool terminalFirst = position is "left:right" or "top:bottom";
         int start = sideBySide ? work.Left : work.Top;
         int end = sideBySide ? work.Right : work.Bottom;
-        int terminalSize = (end - start) * terminalPart / (terminalPart + browserPart);
+        int terminalSize = (int)(((long)end - start) * terminalPart / (terminalPart + browserPart));   // in 64 bits: a wide work area times the part overflows an int
         int split = terminalFirst ? start + terminalSize : end - terminalSize;
         (int tStart, int tEnd, int bStart, int bEnd) = terminalFirst ? (start, split, split, end) : (split, end, start, split);
         terminal = sideBySide
@@ -1480,10 +1627,59 @@ Answer 'refused no new window appeared'
         return null;
     }
 
+    /// <summary>
+    /// Starts the cost bar of this session in the shared browser (joint-browser's `costbar start`, a daemon that outlives this
+    /// process and ends when the browser closes), so every session shows what it spends without anyone asking. It needs the
+    /// skills folder's browser.mjs, node and Playwright; with any of them missing the launch goes on and says why there is no bar.
+    /// </summary>
+    static void StartCostBar(string workspaceDir, string? harnessName)
+    {
+        string script = Path.Combine(FindSkillsFolder(), BrowserSkill, "browser.mjs");
+        string? missing = !File.Exists(script) ? $"{script} is missing" : PlaywrightPackage(workspaceDir) == null ? "Playwright is not installed (node <skills folder>/joint-browser/browser.mjs setup)" : null;
+        if (missing == null)
+        {
+            var info = new ProcessStartInfo("node") { WorkingDirectory = workspaceDir, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            info.ArgumentList.Add(script);
+            info.ArgumentList.Add("costbar");
+            info.ArgumentList.Add("start");
+            if (!string.IsNullOrEmpty(harnessName)) info.Environment["JOINT_HARNESS"] = harnessName;
+            info.Environment["JOINT_TOOL"] = "Joint Launcher";
+            try { Process.Start(info)?.Dispose(); }
+            catch (System.ComponentModel.Win32Exception) { missing = "node is not installed (Node.js 20+)"; }
+        }
+        Console.WriteLine(missing == null ? "[joint-launcher] cost bar starting in the browser (joint-browser costbar)" : $"[joint-launcher] no cost bar: {missing}");
+    }
+
     static bool IsCarriedSkill(string name) => Array.Exists(EmbeddedSkills, s => s.Name == name) || Array.Exists(FolderSkills, s => s.Name == name);
 
     /// <summary>The folder the tool runs from: its source's when run from source, else the binary's.</summary>
     static string ToolDir() => Path.GetDirectoryName(AppContext.GetData("EntryPointFilePath") as string ?? Environment.ProcessPath!)!;
+
+    /// <summary>
+    /// The folder this tool keeps its session files in (browser profile, status page, session.json, log, extracted native library):
+    /// .joint/&lt;name&gt; in the working folder, else beside the tool, so a copied folder carries them and nothing lives outside it.
+    /// A .gitignore holding * keeps the folder out of git.
+    /// </summary>
+    static string SessionFolder(string name)
+    {
+        string last = "";
+        var failures = new List<string>();
+        foreach (string root in new[] { Directory.GetCurrentDirectory(), ToolDir() })
+        {
+            last = Path.Combine(root, ".joint", name);
+            try
+            {
+                Directory.CreateDirectory(last);
+                string ignore = Path.Combine(root, ".joint", ".gitignore");
+                if (!File.Exists(ignore)) File.WriteAllText(ignore, "*" + Environment.NewLine);
+                return last;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException or System.Security.SecurityException) { failures.Add($"{last} ({e.Message})"); }
+        }
+        // Neither place can hold the folder: say so (both causes) instead of handing back a path that fails later without one.
+        Console.WriteLine($"Error: cannot keep the session files: {string.Join(" and ", failures)}.");
+        return last;
+    }
 
     /// <summary>
     /// The nearest folder named skills that holds the browser skill, from the tool's own folder upward (the repository's
@@ -1565,6 +1761,11 @@ Answer 'refused no new window appeared'
     static string? SkillFile(string workspaceDir, Harness harness, JointDefaults defaults, string name) =>
         IsCarriedSkill(name) ? HarnessSkillFile(workspaceDir, harness, name)
         : defaults.Skills.TryGetValue(name, out var path) ? Path.GetFullPath(path, workspaceDir) : null;
+
+    /// <summary>Why a start skill is refused when it is neither embedded nor configured in Skills (no closing period).</summary>
+    static string UnknownSkill(string name, string defaultsFile, JointDefaults defaults) =>
+        $"skill '{name}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {defaultsFile}" +
+        $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}";
 
     /// <summary>
     /// The harness's first message: the skill by the harness's own command (claude /name, codex $name, pi /skill:name)
@@ -1668,6 +1869,10 @@ is needed; runJointLauncher.json is created there on the first session.
                          (.claude/skills, .agents/skills, .pi/skills) when missing, never over a copy already there;
                          other skills are named with their SKILL.md path in Skills of runJointLauncher.json.
   --skillargs "<args>"   the skill's own arguments, e.g. --skill my-review --skillargs "login page".
+  --group <name>         the session group this launch is tracked in (default: Default; for this run only, never saved).
+                         A group is made by using its name: 1-40 ASCII letters, digits, spaces or . _ & + -. The joint cost
+                         bar shows the current session's cost and its group's total over every launch in the group
+                         (runJointCost.cs --groups lists them).
   --position <t:b>       where the terminal and the browser go: left:right, right:left (side by side) or
                          top:bottom, bottom:top (stacked); the terminal is the first named side.
   --ratio <t>:<b>        the terminal's share against the browser's along the split, e.g. 1:2, 1:1. Side by side the
@@ -1675,7 +1880,7 @@ is needed; runJointLauncher.json is created there on the first session.
   --newterminal          open a terminal of its own running the harness. Without it no second terminal opens: inside a
                          harness (claude, codex, pi), or started by any other program (input that is no console), that
                          harness is the session's and the browser opens beside its terminal (--position, --ratio; the
-                         whole work area when that window cannot be moved), so --skill and --skillargs are refused and
+                         whole work area when that window cannot be moved), so --skill, --skillargs and --group are refused and
                          --harness is not needed there (from a program it only overrides whose skills folder gets the skills; inside a harness,
                          another one named starts in a terminal of its own and the caller's stays where it is). From a plain terminal the harness
                          starts right there, and its exit ends the session.
@@ -1695,13 +1900,19 @@ Chrome, else Microsoft Edge or Chromium, or name a browser's path.
 Platforms: Windows (Windows Terminal), macOS (Terminal.app; allow it to be controlled when macOS asks) and Linux
 (gnome-terminal, konsole, xfce4-terminal or xterm; the windows are placed on X11, on Wayland both open unplaced).
 
-Writes <local app data>/joint-launcher/session.json (cdp, browserPid, harness, skill, skipHarness) for a skill to
+Writes <working folder>/.joint/joint-launcher/session.json (cdp, browserPid, harness, skill, skipHarness) for a skill to
 attach to. The session ends when you close its windows.
 """);
     }
 
     /// <summary>How a harness start reads in a message: on the skill's prompt, or with none.</summary>
     static string OnSkill(string skillPrompt) => skillPrompt.Length == 0 ? "with no skill" : "on: " + skillPrompt;
+
+    /// <summary>The status page with the notice (why the harness starts without its skill) as a line before the last one; unchanged when there is none.</summary>
+    static string WithSkillNotice(string page, string skillNotice) =>
+        skillNotice.Length == 0 ? page : page.Replace(StatusLastItem, $"    <li><strong>{WebUtility.HtmlEncode(skillNotice)}</strong></li>\n" + StatusLastItem);
+
+    private const string StatusLastItem = "    <li>Whatever the session opens";
 
     static string StatusPage(string harnessName, string skillPrompt, bool skipHarness)
     {
@@ -1965,7 +2176,7 @@ attach to. The session ends when you close its windows.
     /// frontmatter): joint-launcher asks what to do, joint-launcher-install sets up what the session needs,
     /// joint-launcher-doctor troubleshoots a launch.
     /// </summary>
-    private static readonly JointSkill[] EmbeddedSkills =
+    private static readonly JointSkill[] EmbeddedSkillTexts =
     {
         new(InstallSkill, """
 ---
@@ -2049,6 +2260,9 @@ terminal running this harness beside a shared browser on DevTools port 127.0.0.1
 3. Offer to run the fixes, asking before each change to the machine, then run `--doctor` again and report.
 """),
     };
+
+    /// <summary>The embedded skills as the tool uses them: EmbeddedSkillTexts as JointSkill records.</summary>
+    private static readonly JointSkill[] EmbeddedSkills = EmbeddedSkillTexts.Select(t => new JointSkill(t.Name, t.Text, t.HelperName, t.HelperText)).ToArray();
 
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
