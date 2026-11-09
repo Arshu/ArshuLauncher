@@ -3,3 +3,7 @@ runJointLauncher.json
 .claude/
 .agents/
 .pi/
+
+# The maintainer build tool and its output (not published)
+runJointBuild.cs
+dist/
