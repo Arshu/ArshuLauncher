@@ -222,7 +222,7 @@
       <button role="tab" data-os-tab="linux" aria-selected="false">Linux</button>
     </div>
     <div class="step quick">
-      <p>Needs your assistant (Claude Code shown) installed and signed in, Chrome or Edge, and Node.js 20+. Not sure? Start with <a href="#start">the install steps</a>. The command installs nothing else, and works in a folder of its own: <code>Documents/AIWork</code>.</p>
+      <p>Needs your assistant (Claude Code shown) installed and signed in, Chrome or Edge, and Node.js 20+. Not sure? Start with <a href="#start">the install steps</a>. The command installs nothing else, and works in a folder of its own: <code>~/AIWork</code>.</p>
       <div data-os-only="windows"><div class="cmd"><pre>irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.ps1 | iex</pre><button data-copy>Copy</button></div></div>
       <div data-os-only="mac"><div class="cmd"><pre>curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh</pre><button data-copy>Copy</button></div></div>
       <div data-os-only="linux"><div class="cmd"><pre>curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh</pre><button data-copy>Copy</button></div></div>
@@ -254,9 +254,9 @@
     <div class="step quick">
       <h3 style="counter-increment:none">One line</h3>
       <p>With your assistant installed and signed in, Chrome or Edge, and Node.js 20+, paste this. It makes a work folder, downloads the launcher and starts it. Missing something? <code>--doctor</code> names it and the fix.</p>
-      <div data-os-only="windows"><div class="cmd"><pre>mkdir $HOME\Documents\AIWork -Force; cd $HOME\Documents\AIWork; iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe; .\runJointLauncher.exe --harness claude</pre><button data-copy>Copy</button></div></div>
-      <div data-os-only="mac"><div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m | sed s/x86_64/x64/) -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
-      <div data-os-only="linux"><div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="windows"><div class="cmd"><pre>mkdir $HOME\AIWork -Force; cd $HOME\AIWork; iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe; .\runJointLauncher.exe --harness claude</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="mac"><div class="cmd"><pre>mkdir -p ~/AIWork &amp;&amp; cd ~/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m | sed s/x86_64/x64/) -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
+      <div data-os-only="linux"><div class="cmd"><pre>mkdir -p ~/AIWork &amp;&amp; cd ~/AIWork &amp;&amp; curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher &amp;&amp; chmod +x runJointLauncher &amp;&amp; ./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div></div>
       <p class="note">Use <code>--harness codex</code> or <code>--harness pi</code> for those assistants. The launcher itself installs nothing.</p>
     </div>
 
@@ -302,15 +302,15 @@
         <h3>Download and start</h3>
         <p>Make a folder for your work, download the launcher into it, and start it:</p>
         <div data-os-only="windows">
-          <div class="cmd"><pre>mkdir $HOME\Documents\AIWork; cd $HOME\Documents\AIWork</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>mkdir $HOME\AIWork; cd $HOME\AIWork</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe</pre><button data-copy>Copy</button></div>
         </div>
         <div data-os-only="mac">
-          <div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>mkdir -p ~/AIWork &amp;&amp; cd ~/AIWork</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-osx-$(uname -m | sed s/x86_64/x64/) -o runJointLauncher &amp;&amp; chmod +x runJointLauncher</pre><button data-copy>Copy</button></div>
         </div>
         <div data-os-only="linux">
-          <div class="cmd"><pre>mkdir -p ~/Documents/AIWork &amp;&amp; cd ~/Documents/AIWork</pre><button data-copy>Copy</button></div>
+          <div class="cmd"><pre>mkdir -p ~/AIWork &amp;&amp; cd ~/AIWork</pre><button data-copy>Copy</button></div>
           <div class="cmd"><pre>curl -fsSL https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/') -o runJointLauncher &amp;&amp; chmod +x runJointLauncher</pre><button data-copy>Copy</button></div>
         </div>
         <div class="cmd"><pre>./runJointLauncher --harness claude</pre><button data-copy>Copy</button></div>

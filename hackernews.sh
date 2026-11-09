@@ -1,5 +1,5 @@
 #!/bin/sh
-# Arshu Launcher, Hacker News demo: downloads the launcher and the read-only Hacker News skill into ~/Documents/AIWork
+# Arshu Launcher, Hacker News demo: downloads the launcher and the read-only Hacker News skill into ~/AIWork
 # and opens a terminal and a shared browser side by side on it. Usage: curl -fsSL <this file> | sh   (or: sh hackernews.sh [claude|codex|pi])
 # Needs your assistant installed and signed in, Chrome or Edge, and Node.js 20+. Nothing else is installed.
 set -eu
@@ -16,7 +16,7 @@ case "$(uname -m)" in
   arm64|aarch64) arch=arm64 ;;
   *) echo "Unsupported CPU: $(uname -m)"; exit 1 ;;
 esac
-dir="$HOME/Documents/AIWork"
+dir="$HOME/AIWork"
 mkdir -p "$dir/skills/joint-browser" "$dir/skills/joint-hackernews" "$dir/ArshuCost"
 cd "$dir"
 [ -x runJointLauncher ] || { curl -fsSL "$rel/runJointLauncher-$os-$arch" -o runJointLauncher && chmod +x runJointLauncher; }

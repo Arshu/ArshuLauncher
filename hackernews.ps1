@@ -1,11 +1,11 @@
-# Arshu Launcher, Hacker News demo: downloads the launcher and the read-only Hacker News skill into ~\Documents\AIWork
+# Arshu Launcher, Hacker News demo: downloads the launcher and the read-only Hacker News skill into ~\AIWork
 # and opens a terminal and a shared browser side by side on it. Usage: irm <this file> | iex
 # Needs your assistant installed and signed in, Chrome or Edge, and Node.js 20+. Nothing else is installed.
 $ErrorActionPreference = 'Stop'
 $harness = if ($env:HN_HARNESS) { $env:HN_HARNESS } else { 'claude' }
 $base = 'https://raw.githubusercontent.com/Arshu/ArshuLauncher/main'
 $rel = 'https://github.com/Arshu/ArshuLauncher/releases/latest/download'
-$dir = Join-Path $HOME 'Documents\AIWork'
+$dir = Join-Path $HOME 'AIWork'
 New-Item -ItemType Directory -Force "$dir\skills\joint-browser", "$dir\skills\joint-hackernews", "$dir\ArshuCost" | Out-Null
 Set-Location $dir
 if (-not (Test-Path runJointLauncher.exe)) { Invoke-WebRequest "$rel/runJointLauncher-win-x64.exe" -OutFile runJointLauncher.exe }

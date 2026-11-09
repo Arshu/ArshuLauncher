@@ -25,7 +25,7 @@ account or subscription; the launcher adds no cost). Changes are listed in the
 
 
 One command downloads the launcher and the read-only [`joint-hackernews`](skills/joint-hackernews/SKILL.md) skill into
-`Documents/AIWork`, and opens a terminal and a browser side by side. You click around news.ycombinator.com and the
+`~/AIWork`, and opens a terminal and a browser side by side. You click around news.ycombinator.com and the
 assistant adds topic tabs, fast risers, high-karma submitters, comment collapsing and thread summaries. It never
 posts, replies or votes. Needs your assistant installed and signed in, Chrome or Edge, and Node.js 20+.
 
@@ -118,7 +118,7 @@ With your assistant installed and signed in, a Chromium browser, and Node.js 20+
 anything missing, with the fix), paste one line into a terminal. It makes a work folder, downloads the launcher and
 starts it:
 
-- **Windows (PowerShell):** `mkdir $HOME\Documents\AIWork -Force; cd $HOME\Documents\AIWork; iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe; .\runJointLauncher.exe --harness claude`
+- **Windows (PowerShell):** `mkdir $HOME\AIWork -Force; cd $HOME\AIWork; iwr https://github.com/Arshu/ArshuLauncher/releases/latest/download/runJointLauncher-win-x64.exe -OutFile runJointLauncher.exe; .\runJointLauncher.exe --harness claude`
 - **Mac / Linux:** see the line for your computer on [launcher.arshucs.com](https://launcher.arshucs.com/#start), or the steps below.
 
 ## Get started in 3 steps

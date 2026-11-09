@@ -76,13 +76,13 @@ Windows 11 already has it. Windows 10 has not been tested; if you try it: `winge
 The launcher is **one program file** for your computer, from the
 [latest release](https://github.com/Arshu/ArshuLauncher/releases/latest). It needs nothing else installed.
 
-1. Make a folder for your work, for example `Documents\AIWork` (Windows) or `Documents/AIWork` (Mac/Linux), and go
+1. Make a folder for your work, for example `AIWork` in your home folder (`$HOME\AIWork` on Windows, `~/AIWork` on Mac/Linux), and go
    into it in the terminal:
 
    | Computer | Command |
    |---|---|
-   | Windows | `mkdir $HOME\Documents\AIWork; cd $HOME\Documents\AIWork` |
-   | Mac / Linux | `mkdir -p ~/Documents/AIWork && cd ~/Documents/AIWork` |
+   | Windows | `mkdir $HOME\AIWork; cd $HOME\AIWork` |
+   | Mac / Linux | `mkdir -p ~/AIWork && cd ~/AIWork` |
 
 2. Download the launcher into it, saved as `runJointLauncher` (`runJointLauncher.exe` on Windows):
 
@@ -259,7 +259,7 @@ topic groups, high-karma submitters, comment indent guides, collapsing near-dupl
 summaries). It never posts, replies, votes or submits. The AI cost of the session is shown at the bottom of the page.
 
 **Quickest:** `curl -fsSL https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.sh | sh` (Mac, Linux) or `irm https://raw.githubusercontent.com/Arshu/ArshuLauncher/main/hackernews.ps1 | iex` (Windows
-PowerShell) downloads the launcher, this skill and `joint-browser` into `Documents/AIWork`, writes the `Skills` entry
+PowerShell) downloads the launcher, this skill and `joint-browser` into `AIWork` in your home folder, writes the `Skills` entry
 below if there is no `runJointLauncher.json` yet, and starts on the skill. The manual way follows.
 
 It lives in this repository in `skills/joint-hackernews/`, so use it from a clone (or keep that folder next to the
