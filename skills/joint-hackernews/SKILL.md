@@ -6,7 +6,8 @@ description: Browse Hacker News together with the user in the joint session's sh
 # joint-hackernews
 
 The user watches the shared browser (DevTools on 127.0.0.1:9222) and **navigates by clicking in it**. You inject
-options into the Hacker News pages they visit and help read: classify stories, summarise and label a thread.
+options into the Hacker News pages they visit and help read: classify stories, summarise and label a thread. Plan:
+`PLAN_HACKERNEWS.md` in the repository root.
 
 ## The rule: this skill never writes to Hacker News
 
@@ -47,41 +48,31 @@ subfolder) is not counted: the line would show $0.00 for the whole session.
 1. `node <this folder>/../joint-browser/browser.mjs status` must name a `browser` (Node 20+, Playwright, the session's
    browser). If not, follow joint-browser's section 0 and ask the user to start the launcher.
 2. `node <this folder>/hn.mjs start`: the daemon (it stays attached, so the options survive every navigation).
-   It reads the AI cost with `runJointCost.cs`; `status` shows `cost` (an `error` there is shown in the dock as
+   It reads the AI cost with `runJointCostAST.cs`; `status` shows `cost` (an `error` there is shown in the dock as
    "AI cost: unavailable", never as a made-up number: tell the user the message).
 
-## 1. Pick who you are, then the options
+## 1. First run: three questions, then browse
 
-**First question: "How do you use Hacker News?"** (one or more; `hn.mjs persona list` shows them): Reader (skims, rarely
-replies: triage, look, bookmarks; frugal), Contributor (joins discussions: triage, look, worth joining), Maker (posted a Show HN
-or link: look, bookmarks), Researcher/curator (bookmarks, triage, look), or a custom mix (`hn.mjs module on|off
-<look|triage|bookmarks|opportunities>`). Apply with `hn.mjs persona apply reader` (or `reader,maker`: the union of their
-modules, the first one's token level). The dock shows only the sections of the modules that are on; "show every
-control" reveals the rest. Personas and modules are data (`modules.json`, and the user's `personas.json`): after tuning,
-`hn.mjs persona save <name>` keeps the mix and `persona export <name>` prints a JSON file the user can share; `persona
-import <file>` loads one (validated: known options only, never identity). We do not know every kind of HN
-user yet, so help the user adjust their persona instead of adding controls for everyone.
+Check `node hn.mjs persona` first. If it says `chosen: false`, ask the three questions below. If the persona is already chosen,
+say which one it is (it cannot change), skip the questions and go on to browsing.
 
-Then the persona-specific details below only for what the persona turned on.
+Ask these three in one question-tool call, in this order, with exactly these texts and options in this order (never
+reorder to put a saved or recommended one first; say the default in the option text):
 
-Ask with your question tool (multi-select where it fits), then apply with `hn.mjs set <path> <value>`. Defaults are
-fine for anything they skip; show them what is on. `hn.mjs get` prints everything.
+1. "How do you use Hacker News?" (one): Reader, Contributor, Maker, Researcher/curator. Apply with
+   `hn.mjs persona choose <reader|contributor|maker|researcher>`. **The persona is chosen once and cannot be changed**
+   (the command refuses a second time; the dock offers no switch). Do not offer to change it; if the user insists,
+   `hn.mjs reset` wipes the options and starts over.
+2. "Token use level for Claude tasks?" (one): Frugal, Balanced (default), Thorough. Apply with `hn.mjs budget <level>`.
+3. "Where should the dock go?" (one): Right (default), Left, Top, Bottom. Apply with `hn.mjs set dock <side>`.
 
-| Question | Option |
-|---|---|
-| Where the dock goes | `dock`: right (default), left, top, bottom |
-| Look | `visual.theme` dark/sepia/default, `visual.width` wide/normal, `visual.fontScale`, `visual.hideFooter` |
-| Stories: high-karma submitters | `list.karma.on`, `list.karma.threshold` (10000), `list.karma.topN`, `list.karma.watch` (list of names) |
-| Stories: topic groups | `list.groups` (JSON list of `{name,color,keywords,domains}`; AI, Politics, Technical by default; ask which groups to ADD), `list.classifier` keywords+claude / keywords / off |
-| Stories: more | `list.velocity`, `list.seen`, `list.newMarks` (a green NEW badge and a ✦ count on the dock tab for stories this browser had not listed before the current visit; a visit ends after 30 quiet minutes; the first run only seeds) |
-| **Token use** (ask it; it is what the user pays) | `hn.mjs budget frugal` (reads little: 60 comments, 200 chars, 2 levels; free keyword groups only), `balanced` (default: 150 / 350 / 3 levels), `thorough` (400 / 700 / all levels) |
-| Cheaper model for Claude tasks | `claude.cheapModel` true = the user agrees you may hand classify / label / summary reading to a small-model subagent (Agent tool, a haiku-class model, never a premium one) and keep only its result; false (default) = you do them yourself |
-| Bookmarks | `bookmarks.path` (default `~/.joint-hackernews/bookmarks.json`; a synced folder if they want) |
-| Discussion | `discussion.indentGuides`, `highlightOp`, `collapseDepth` (0 off), `authorCard`, `repeats` (collapse near-duplicates, free), `labels` (0 off, 1 attacks, 2 +snark, 3 +low substance) |
+The dock then shows only what the persona needs (data in `modules.json`): Reader = triage + look + bookmarks,
+Contributor = triage + look + worth joining, Maker = look + bookmarks, Researcher = bookmarks + triage + look. Anything
+finer (karma threshold, watch-list, mute, alerts, groups, classifier, collapse depth) is not in the dock: set it only
+when the user asks, with `hn.mjs set <path> <value>` (`hn.mjs get` prints every option) or `hn.mjs group add`.
 
-Then `node hn.mjs open` (the front page) and tell the user to browse; every option is also in the dock (the
-"HN ⚙" tab) and changes there are saved. Say that the options that need no Claude call cost nothing, and that
-classify / summarise / label cost tokens, shown at the bottom ("AI cost session $x | group G $y": the current session and the default session group; `*` = a default price, an estimate).
+Then `node hn.mjs open` and tell the user to browse. Options that need no Claude call cost nothing; classify, summarise
+and label cost tokens, shown at the bottom ("AI cost: session $x | group G $y"; `*` = an estimate).
 
 ## 2. Browse
 
@@ -91,17 +82,7 @@ the user says "handle the HN requests" or after they mention the dock** (the dae
 - **Classify stories** (request `classify` or "classify these"): `node hn.mjs read`; assign each story one group name
   (the configured groups, or a new name the user wants; `Others` when none fits), judging title and domain. Write
   `{"stories": {"<id>": "<group>", ...}}` to a scratch file and `node hn.mjs annotate <file>`.
-- **Claude's picks** (request `picks`, or "pick for me"): a short list of stories this user would want, chosen from their own
-  signals, never from a guess about "what is good". First learn the signals: `hn.mjs get list` (groups, alert words, mutes),
-  `hn.mjs bookmarks --md` (what they saved and tagged) and, if set, `hn.mjs get identity`. Then `hn.mjs read` the list page and
-  pick **at most 5** (fewer is fine, none is fine: say so). Each pick gets one honest reason (<= 140 chars) that names the
-  signal it matches ("saved 3 Rust items; this is a Rust compiler post") and anything worth knowing from the row (points,
-  comments, age, domain). Skip muted stories. Write `{"picks": {"<id>": "<reason>", ...}}` and `hn.mjs annotate <file>`: it
-  REPLACES the previous picks. The page shows a gold ★ on the rows and lists them in the dock. You only read titles, domains
-  and counts here (no articles, no comments), so say if a reason is a guess from the title. Never pick to push the user toward
-  posting or replying.
-- **Groups grow while browsing.** The user adds one in the dock ("new group" + keywords + Add), or with
-  `hn.mjs group add <name> --keywords a,b --domains x.com`; `group remove <name>`, `group list`. You may also
+- **Groups.** Add one with `hn.mjs group add <name> --keywords a,b --domains x.com`; `group remove <name>`, `group list`. You may also
   **propose** one: when you classify and about four or more stories on the page share a theme that fits no group
   (they would all be `Others`), do not invent the group silently. Ask the user (your question tool): the name, the
   keywords you would use, the stories it would take. Only on a yes run `group add`, then classify again so the page
@@ -173,13 +154,12 @@ the way to measure the true cost of browsing. And:
   JSON back; you then run `annotate`. Say that you are doing so.
 - Before an expensive step (a 150+ comment thread at `thorough`) say the dock's estimate and let the user choose.
 
-## 3. Fine-tune with the user
+## 3. Fine-tune
 
-The user is trying it for themselves. Collect what they dislike or want (a group's keywords, a colour, a threshold, a
-missing highlight), change the option with `hn.mjs set` first, and the code only when an option cannot do it:
-`hn-inject.js` (the page: CSS, dock, highlights) or `hn.mjs` (the daemon). After editing `hn-inject.js` or `hn.mjs`:
-`node hn.mjs restart`, then reload the tab. Validate every change by its effect in the page (an
-`eval` that counts the badges or reads a computed style, a screenshot), never by "no error".
+Change an option with `hn.mjs set` first, the code only when an option cannot do it (`hn-inject.js` is the page,
+`hn.mjs` the daemon; then `node hn.mjs restart` and reload the tab). Validate by effect in the page (an `eval` counting
+badges, a screenshot), never by "no error". The dock's 📖 on a story and the Summarise button only **queue** a request
+(the row shows "⏳ queued" and the footer says so): run `hn.mjs requests` when the user tells you to handle them.
 
 ## 4. End
 

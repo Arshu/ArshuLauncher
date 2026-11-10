@@ -78,7 +78,7 @@
   #hn-panel .be{margin:2px 0 6px;line-height:1.3}#hn-panel .be a{color:#8ab4f8}#hn-panel .be input[type=text]{width:100%;margin-top:2px}
   #hn-panel .be select{max-width:90px;margin-left:4px}#hn-panel .be button{padding:0 6px;margin:0 0 0 4px}
   #hn-panel .bm-meta{color:#8a8a8a;font-size:11px}
-  tr.hn-muted{display:none}tr.hn-mshown{opacity:.4}
+  tr.hn-muted{display:none}.hn-queued{color:#ff6600!important}tr.hn-mshown{opacity:.4}
   tr.hn-alert>td:first-child{box-shadow:inset 8px 0 0 #ff2d95}.hn-bn{background:#ff2d95;color:#fff}
   .hn-mutebtn,.hn-art{cursor:pointer;background:none!important;color:#999!important;padding:0 3px}.hn-art[data-article]:hover,.hn-mutebtn:hover{color:#ff6600!important}
   tr.hn-k1>td:first-child{box-shadow:inset 4px 0 0 #c9a227}tr.hn-k2>td:first-child{box-shadow:inset 6px 0 0 #e8761f}
@@ -338,6 +338,7 @@
       else if (line) line.append(el('span', { class: 'hn-badge hn-mutebtn', 'data-kind': s.domain ? 'domain' : 'user', 'data-value': s.domain || s.user, text: '⊘', title: 'mute ' + (s.domain ? 'this site' : 'this user') + ' (local; undo in the dock)' }));
       const art = (S.annotations.articles || {})[s.id];
       if (line && s.domain) line.append(art ? el('span', { class: 'hn-badge hn-art', text: '📖 ' + art.minutes + ' min', title: art.tldr })
+        : (S.queuedArticles || []).includes(s.id) ? el('span', { class: 'hn-badge hn-art hn-queued', text: '⏳ queued', title: 'asked: tell Claude "handle the HN requests" and the summary appears here' })
         : el('span', { class: 'hn-badge hn-art', 'data-article': s.id, text: '📖', title: 'ask Claude to summarise this article (≈ ' + kfmt(ARTICLE_TOK[S.options.claude.budget] || 1500) + ' tokens)' }));
       const pick = (S.annotations.picks || {})[s.id];
       if (pick) add('hn-pickb', '★ pick', "Claude's pick: " + pick.reason);
@@ -431,6 +432,9 @@
     let foot = $('#hn-foot');
     if (!foot) { foot = el('div', { id: 'hn-foot' }, el('span', { class: 'n', text: NOTICE }), el('span', { class: 'c' })); document.body.append(foot); }
     const ct = costText(), c = $('.c', foot); c.textContent = ct.t; c.title = ct.title;
+    let rq = $('#hn-req', foot);
+    if (!rq) { rq = el('span', { id: 'hn-req', class: 'n' }); foot.insertBefore(rq, $('.c', foot)); }
+    rq.textContent = S.requests > 0 ? S.requests + ' request(s) for Claude waiting: tell Claude "handle the HN requests"' : '';
     let tab = $('#hn-tab');
     if (!tab) {
       tab = el('button', { id: 'hn-tab', type: 'button', text: 'HN ⚙' });
@@ -455,90 +459,58 @@
     return el('label', {}, o.kind === 'bool' ? input : null, label, o.kind === 'bool' ? null : input);
   }
 
+  // The dock shows only what the chosen persona turned on. The persona is picked once (here, or by Claude's first question) and is then fixed.
   function buildPanel(type) {
-    const o = S.options, out = [], all = sessionStorage.getItem('hn-all') === '1';
-    const show = (m) => all || (o.modules || []).includes(m);
+    const o = S.options, out = [];
     const cat = S.catalog || { modules: {}, personas: {} };
-    const check = (attrs, on) => { const c = el('input', { type: 'checkbox', ...attrs }); c.checked = !!on; return c; };
-    out.push(el('div', {}, el('b', { text: 'Joint Hacker News' }), ' · ' + (type === 'list' ? 'story list' : type === 'item' ? 'discussion' : 'other page')));
-    out.push(el('h4', { text: 'You' }));
-    const pick = el('select', { 'data-persona': '1' },
-      ...Object.entries(cat.personas).map(([id, p]) => el('option', { value: id, text: p.title || id, title: p.about || '', selected: id === o.persona })),
-      el('option', { value: 'custom', text: 'custom mix', selected: !cat.personas[o.persona] }));
-    out.push(el('label', {}, 'I am a ', pick));
-    const pm = cat.personas[o.persona];
-    if (pm && pm.about) out.push(el('div', { class: 'bm-meta', text: pm.about }));
-    const mods = el('div');
-    for (const [id, m] of Object.entries(cat.modules)) if (m.status === 'ready') mods.append(el('label', { title: m.about || '' }, check({ 'data-module': id }, (o.modules || []).includes(id)), m.title || id));
-    out.push(mods);
-    out.push(el('label', {}, check({ 'data-showall': '1' }, all), 'show every control'));
-    out.push(el('h4', { text: 'Settings' }));
+    const has = (m) => (o.modules || []).includes(m);
+    if (!o.personaChosen) {
+      out.push(el('div', {}, el('b', { text: 'Joint Hacker News' })));
+      out.push(el('h4', { text: 'How do you use Hacker News?' }));
+      out.push(el('div', { class: 'bm-meta', text: 'Pick once; it cannot be changed afterwards.' }));
+      for (const [id, p] of Object.entries(cat.personas)) out.push(el('div', {}, el('button', { 'data-choose': id, text: p.title || id }), el('span', { class: 'bm-meta', text: p.about || '' })));
+      return out;
+    }
+    const pm = cat.personas[o.persona] || {};
+    out.push(el('div', {}, el('b', { text: 'Joint Hacker News' }), ' · ' + (pm.title || o.persona)));
     out.push(field('Dock', opt('dock', 'sel', { choices: ['right', 'left', 'top', 'bottom'] }), o.dock));
-    out.push(field('Token use', opt('claude.budget', 'sel', { choices: ['frugal', 'balanced', 'thorough'] }), o.claude.budget));
-    out.push(field('Cheaper model for Claude tasks', opt('claude.cheapModel', 'bool'), o.claude.cheapModel));
-    out.push(el('div', { class: 'free', text: 'free: keyword groups, karma, duplicates, bookmarks' }));
-    if (show('look')) {
+    if (has('triage')) out.push(field('Token use', opt('claude.budget', 'sel', { choices: ['frugal', 'balanced', 'thorough'] }), o.claude.budget));
+    if (has('look')) {
       out.push(el('h4', { text: 'Look' }));
       out.push(field('Theme', opt('visual.theme', 'sel', { choices: ['dark', 'sepia', 'default'] }), o.visual.theme));
       out.push(field('Width', opt('visual.width', 'sel', { choices: ['wide', 'normal'] }), o.visual.width));
-      out.push(field('Font scale', opt('visual.fontScale', 'sel', { choices: [1, 1.1, 1.25, 1.4] }), o.visual.fontScale));
-      out.push(field('Hide footer', opt('visual.hideFooter', 'bool'), o.visual.hideFooter));
+      if (type === 'item') {
+        const D = o.discussion;
+        out.push(field('Indent guides', opt('discussion.indentGuides', 'bool'), D.indentGuides));
+        out.push(field('Highlight the poster (OP)', opt('discussion.highlightOp', 'bool'), D.highlightOp));
+        out.push(field('Collapse near-duplicates', opt('discussion.repeats', 'bool'), D.repeats));
+      }
     }
-    if (type === 'list' && show('triage')) {
+    if (type === 'list' && has('triage')) {
       const L = o.list;
       out.push(el('h4', { text: 'Stories' }));
       out.push(field('Highlight high-karma submitters', opt('list.karma.on', 'bool'), L.karma.on));
-      out.push(field('Karma threshold', opt('list.karma.threshold', 'num', { step: 500 }), L.karma.threshold));
-      out.push(field('Also top N on page', opt('list.karma.topN', 'num'), L.karma.topN));
-      out.push(field('Watch-list', opt('list.karma.watch', 'list'), L.karma.watch));
       out.push(field('Velocity (points/hour)', opt('list.velocity', 'bool'), L.velocity));
       out.push(field('Dim stories I opened', opt('list.seen', 'bool'), L.seen));
       out.push(field('Mark stories new since my last visit', opt('list.newMarks', 'bool'), L.newMarks));
-      out.push(el('h4', { text: 'Mute and alerts (local)' }));
-      out.push(field('Mute sites', opt('list.mute.domains', 'list'), L.mute.domains));
-      out.push(field('Mute users', opt('list.mute.users', 'list'), L.mute.users));
-      out.push(field('Mute words in titles', opt('list.mute.words', 'list'), L.mute.words));
-      out.push(el('div', {}, el('span', { class: 'bm-meta', text: (window.__hnMuted || 0) + ' muted on this page ' }), el('button', { 'data-showmuted': '1', text: sessionStorage.getItem('hn-showmuted') === '1' ? 'hide them' : 'show them' }),
-        el('span', { class: 'bm-meta', text: ' ⊘ on a row mutes its site' })));
-      out.push(field('Alert words (bell + strongest colour)', opt('list.alerts.words', 'list'), L.alerts.words));
-      out.push(el('h4', { text: 'Topics' }));
-      out.push(field('Classifier', opt('list.classifier', 'sel', { choices: ['keywords+claude', 'keywords', 'off'] }), L.classifier));
       const counts = new Map(); for (const s of window.__hnStories || []) counts.set(s.group, (counts.get(s.group) || 0) + 1);
       const filter = sessionStorage.getItem('hn-filter');
       const chips = el('div');
-      for (const name of [...L.groups.map((g) => g.name), 'Others', ...[...counts.keys()].filter((n) => n !== 'Others' && !L.groups.some((g) => g.name === n))]) {
+      for (const name of [...L.groups.map((g) => g.name), 'Others']) {
         const n = counts.get(name) || 0;
         const chip = el('span', { class: 'chip' + (filter === name ? ' on' : ''), 'data-group': name, text: name + ' · ' + n, title: n + ' ' + (n === 1 ? 'story' : 'stories') + ' on this page in "' + name + '"; click to show only these' });
         chip.style.setProperty('--c', colorOf(name)); chips.append(chip);
       }
+      out.push(el('h4', { text: 'Topics' }));
       out.push(chips);
-      out.push(el('div', {}, el('input', { type: 'text', id: 'hn-gname', placeholder: 'new group', style: 'width:38%' }), ' ', el('input', { type: 'text', id: 'hn-gkw', placeholder: 'keywords, comma separated', style: 'width:42%' }), ' ', el('button', { 'data-addgroup': '1', text: 'Add' })));
-      out.push(el('div', {}, el('button', { 'data-ask': 'classify', text: 'Ask Claude to classify' }), el('span', { class: 'paid', text: 'reads ≈ ' + kfmt(readEstimate('list')) + ' tokens' })));
-      out.push(el('h4', { text: "Claude's picks" }));
-      const picked = (window.__hnStories || []).filter((s) => (S.annotations.picks || {})[s.id]);
-      if (picked.length) { const box = el('div', { class: 'bm' }); for (const s of picked) box.append(el('div', { class: 'be' }, '★ ', el('a', { href: '/item?id=' + s.id, text: s.title }), el('br'), el('span', { class: 'bm-meta', text: S.annotations.picks[s.id].reason }))); out.push(box); }
-      else out.push(el('div', { class: 'bm-meta', text: Object.keys(S.annotations.picks || {}).length ? 'None of the last picks is on this page.' : 'No picks yet.' }));
-      out.push(el('div', {}, el('button', { 'data-ask': 'picks', text: 'Ask Claude for picks' }), el('span', { class: 'paid', text: 'reads ≈ ' + kfmt(readEstimate('list')) + ' tokens' })));
+      if (o.claude.budget !== 'frugal') out.push(el('div', {}, el('button', { 'data-ask': 'classify', text: 'Ask Claude to classify' }), el('span', { class: 'paid', text: 'reads ≈ ' + kfmt(readEstimate('list')) + ' tokens' })));
     }
-    if (type === 'item' && show('look')) {
-      const D = o.discussion;
-      out.push(el('h4', { text: 'Comments' }));
-      out.push(field('Indent guides', opt('discussion.indentGuides', 'bool'), D.indentGuides));
-      out.push(field('Highlight the poster (OP)', opt('discussion.highlightOp', 'bool'), D.highlightOp));
-      out.push(field('Collapse at depth (0 = off)', opt('discussion.collapseDepth', 'num'), D.collapseDepth));
-      out.push(field('Author card on hover', opt('discussion.authorCard', 'bool'), D.authorCard));
-      out.push(field('Collapse near-duplicates', opt('discussion.repeats', 'bool'), D.repeats));
-      out.push(el('span', { class: 'free', text: 'the options above cost nothing' }));
-    }
-    if (type === 'item' && show('triage')) {
-      const D = o.discussion;
+    if (type === 'item' && has('triage')) {
       out.push(el('h4', { text: 'Claude on this thread' }));
-      out.push(field('Collapse labelled comments', opt('discussion.labels', 'sel', { choices: [0, 1, 2, 3] }), D.labels));
-      out.push(el('div', { class: 'free', text: '0 off · 1 attacks · 2 + snark · 3 + low substance/repeats' }));
       out.push(el('div', {}, el('button', { 'data-ask': 'summary', text: 'Summarise' }), el('button', { 'data-ask': 'labels', text: 'Label comments' }), el('span', { class: 'paid', text: 'reads ≈ ' + kfmt(readEstimate('item')) + ' tokens' })));
     }
-    if (show('opportunities')) out.push(...opportunitiesBlock());
-    if (show('bookmarks')) out.push(...bookmarksBlock());
+    if (has('opportunities')) out.push(...opportunitiesBlock());
+    if (has('bookmarks')) out.push(...bookmarksBlock());
     if (S.requests > 0) out.push(el('div', { class: 'req', text: S.requests + ' request(s) waiting. Tell Claude: "handle the HN requests".' }));
     return out;
   }
@@ -546,12 +518,6 @@
   // ---------------------------------------------------------------- events (delegated; no per-element listeners)
   document.addEventListener('change', async (e) => {
     const x = e.target;
-    const ps = x.closest?.('[data-persona]');
-    if (ps) { if (ps.value !== 'custom') { S.options = await bridge({ type: 'persona', name: ps.value }); apply(); } return; }
-    const md = x.closest?.('[data-module]');
-    if (md) { S.options = await bridge({ type: 'module', id: md.dataset.module, on: md.checked }); apply(); return; }
-    const sa = x.closest?.('[data-showall]');
-    if (sa) { sessionStorage.setItem('hn-all', sa.checked ? '1' : '0'); apply(); return; }
     const bn = x.closest?.('[data-bnote]');
     if (bn) { S.bookmarks = await bridge({ type: 'bookmark', action: 'note', kind: bn.dataset.bt, id: bn.dataset.bid, note: bn.value }); apply(); return; }
     const bt = x.closest?.('[data-btags]');
@@ -577,6 +543,8 @@
       S.bookmarks = await bridge({ type: 'bookmark', action: on ? 'remove' : 'add', kind, id, entry: on ? undefined : entryFor(kind, id) });
       apply(); return;
     }
+    const ch = t.closest?.('[data-choose]');
+    if (ch) { S.options = await bridge({ type: 'choose', name: ch.dataset.choose }); apply(); return; }
     if (t.closest?.('[data-oppref]')) { loadOpps(true); return; }
     const mb = t.closest?.('.hn-mutebtn');
     if (mb) { S.options = await bridge({ type: 'mute', kind: mb.dataset.kind, value: mb.dataset.value, on: true }); apply(); return; }

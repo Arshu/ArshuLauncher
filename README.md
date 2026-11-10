@@ -3,7 +3,7 @@
 > [!WARNING]
 > **This software is fully "vibe coded"**: it was written entirely with an AI coding assistant. Every part of it
 > has been **verified by testing on Windows 11, macOS and Ubuntu Linux**, but it comes with no warranty (see the
-> [MIT License](LICENSE)). Read the one file it is built from, [`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs), if you
+> [MIT License](LICENSE)). What was verified, with a recording of each feature, is in the [verification index](Verification/README.md). Read the one file it is built from, [`runJointLauncher.cs`](csharp/Tools/ArshuLauncher/runJointLauncher.cs), if you
 > want to know exactly what it does, and use it at your own risk.
 
 **Pair-test any website with your AI assistant. One command opens a terminal and a browser side by side, and you watch every click.**

@@ -30,7 +30,7 @@ const HOME = path.join(os.homedir(), '.joint-hackernews');
 const CDP = process.env.JOINT_CDP || 'http://127.0.0.1:9222';
 const PLAYWRIGHT_DIR = path.join(os.homedir(), '.joint-browser', 'node');
 const F = { daemon: path.join(HOME, 'daemon.json'), options: path.join(HOME, 'options.json'), ann: path.join(HOME, 'annotations.json'),
-  karma: path.join(HOME, 'karma.json'), costBase: path.join(HOME, 'cost-base.json'), bookmarks: path.join(HOME, 'bookmarks.json'), personas: path.join(HOME, 'personas.json'), requests: path.join(HOME, 'requests.json'), log: path.join(HOME, 'daemon.log') };
+  karma: path.join(HOME, 'karma.json'), costBase: path.join(HOME, 'cost-base.json'), bookmarks: path.join(HOME, 'bookmarks.json'), requests: path.join(HOME, 'requests.json'), log: path.join(HOME, 'daemon.log') };
 
 const USAGE = `Usage: node hn.mjs <command>
   start                      start the daemon in the background (log: ${F.log}) and print its status
@@ -43,9 +43,8 @@ const USAGE = `Usage: node hn.mjs <command>
   annotate <file.json>       merge Claude's annotations: {stories:{id:group}, picks:{id:reason}, comments:{id:{label,reason}}, summaries:{itemId:{...}}}
   requests [--clear]         what the user asked Claude for from the dock (classify, picks, summary, labels, article)
   cost                       re-read the AI cost now
-  persona list | apply <id[,id]> | save <name> [about] | export <name> | import <file.json>   who you are: a preset of modules (data in modules.json and ~/.joint-hackernews/personas.json; yours can be shared)
+  persona [list|choose <id>]  who you are (reader, contributor, maker, researcher): chosen ONCE, then fixed; the dock shows only that persona's sections
   opps [--refresh]           the raw candidate threads behind "worth joining" (the dock scores them with your groups)
-  module on|off <id>         switch a module (look, triage, bookmarks, opportunities) on or off; the persona becomes "custom"
   budget frugal|balanced|thorough   how much of a page \`read\` gives Claude (fewer comments, shorter, shallower = fewer tokens); frugal also uses the free classifier only
   bookmarks [--md] [--group G] [--since YYYY-MM-DD] [--tag t]   the local bookmarks (JSON by group/date, or Markdown)
   article <story id>         the story's linked page as readable text (capped by the token-use level) + reading minutes, for Claude to summarise
@@ -75,6 +74,7 @@ const DEFAULTS = {
   bookmarks: { path: '' },
   opportunities: { maxComments: 10, maxAgeHours: 6, includeAsk: true },   // "worth joining": early threads with few comments
   persona: 'reader',
+  personaChosen: false,                         // true once the user has picked who they are; then it cannot change
   modules: ['triage', 'look', 'bookmarks'],
   identity: { user: '' },                       // the logged-in HN name, read from the page header (read-only)
 };
@@ -132,7 +132,7 @@ function findCostReader() {
   if (process.env.JOINT_COST_READER) return process.env.JOINT_COST_READER;   // the launcher's: the script, or a tool binary that carries the reader
   for (let dir of [process.cwd(), HERE]) {
     for (let i = 0; i < 8; i++, dir = path.dirname(dir)) {
-      for (const rel of ['csharp/Tools/ArshuCost/runJointCost.cs', 'ArshuCost/runJointCost.cs', 'runJointCost.cs']) {
+      for (const rel of ['csharp/ArshuCost/runJointCostAST.cs', 'ArshuCost/runJointCostAST.cs', 'runJointCostAST.cs']) {
         const f = path.join(dir, rel); if (fs.existsSync(f)) return f;
       }
     }
@@ -288,7 +288,7 @@ async function serve() {
     return { ok: true, claude: options.claude, classifier: options.list.classifier };
   };
   const token = crypto.randomBytes(16).toString('hex');
-  const stateFor = () => ({ options, annotations, cost, requests: requests.length, bookmarks, catalog: catalogView() });
+  const stateFor = () => ({ options, annotations, cost, requests: requests.length, queuedArticles: requests.filter((r) => r.kind === 'article').map((r) => r.id), bookmarks, catalog: catalogView() });
   const hnPages = () => ctx.pages().filter((p) => { try { return new URL(p.url()).hostname === 'news.ycombinator.com'; } catch { return false; } });
   const push = async () => { const st = stateFor(); await Promise.all(hnPages().map((p) => p.evaluate((s) => window.__hnApply && window.__hnApply(s), st).catch(() => {}))); };
 
@@ -316,7 +316,7 @@ async function serve() {
     return out;
   };
 
-  // cost: the repository's cost reader (runJointCost.cs); an error is shown as the error, never as a number
+  // cost: the repository's cost reader (runJointCostAST.cs); an error is shown as the error, never as a number
   // the baseline lives as long as this browser instance, so restarting the daemon (fine-tuning) does not reset "$0.00"
   const browserKey = await fetch(new URL('/json/version', CDP)).then((r) => r.json()).then((j) => j.webSocketDebuggerUrl).catch(() => 'unknown');
   const savedBase = readJson(F.costBase, null);
@@ -326,7 +326,7 @@ async function serve() {
     costBusy = true;
     const reader = findCostReader();
     const done = (c) => { costBusy = false; cost = c; push().finally(resolve); };
-    if (!reader) return done({ error: 'runJointCost.cs not found (set HN_COST_READER)' });
+    if (!reader) return done({ error: 'runJointCostAST.cs not found (set HN_COST_READER)' });
     // this skill's own harness (the folder it lives in), so another harness's old sessions cannot break the number
     const harness = HERE.includes(`${path.sep}.agents${path.sep}`) ? 'codex' : HERE.includes(`${path.sep}.pi${path.sep}`) ? 'pi' : 'claude';
     const readerArgs = ['--folder', process.cwd(), '--harness', harness, '--json', '--no-snapshot'];
@@ -353,82 +353,35 @@ async function serve() {
     }, (e) => done({ error: e.message }));
   });
 
-  // ---- personas and modules: data, not code (modules.json beside this file, the user's own in personas.json). A module is a
-  // bundle of option values; a persona is a list of modules, a token level and optional option overrides. People tune
-  // and share them (module toggles, persona save / export / import) because we do not know every kind of HN user yet.
-  const PERSONA_ID = /^[\w-]{1,24}$/;
-  const catalog = () => {
-    const c = readJson(path.join(HERE, 'modules.json'), { modules: {}, personas: {} });
-    return { modules: c.modules, personas: { ...c.personas, ...readJson(F.personas, {}) }, shipped: Object.keys(c.personas) };
-  };
+  // ---- persona: chosen ONCE (options.personaChosen) and then fixed. A persona is a list of modules (data in modules.json) and a
+  // token level; the dock shows only the sections of those modules. To pick again, `reset` wipes the options on purpose.
+  const catalog = () => readJson(path.join(HERE, 'modules.json'), { modules: {}, personas: {} });
   const catalogView = () => {
     const c = catalog();
     return { modules: Object.fromEntries(Object.entries(c.modules).map(([k, m]) => [k, { title: m.title, about: m.about, status: m.status }])),
       personas: Object.fromEntries(Object.entries(c.personas).map(([k, p]) => [k, { title: p.title, about: p.about }])) };
   };
-  const leaves = (tree, pre = '') => Object.entries(tree).flatMap(([k, v]) => (isObj(v) ? leaves(v, pre + k + '.') : [[pre + k, v]]));
-  const applyModules = (ids) => {
-    const c = catalog(), known = ids.filter((id) => c.modules[id]?.status === 'ready');
-    for (const [id, m] of Object.entries(c.modules)) {
-      if (m.status !== 'ready') continue;
-      for (const [p, v] of Object.entries(known.includes(id) ? m.set || {} : m.off || {})) setPath(options, p, v);
-    }
-    options.modules = known;
-  };
   const setBudget = (name) => {
     options.claude = { ...options.claude, budget: name, ...BUDGETS[name] };
     if (options.modules.includes('triage')) options.list.classifier = name === 'frugal' ? 'keywords' : 'keywords+claude';   // frugal: the free classifier only
   };
-  const applyPersonas = (names) => {
-    const c = catalog(), list = names.map((n) => String(n).trim()).filter(Boolean), missing = list.filter((n) => !c.personas[n]);
-    if (!list.length || missing.length) return { ok: false, error: `no persona "${missing[0] || ''}"; there are: ${Object.keys(c.personas).join(', ')}` };
-    applyModules([...new Set(list.flatMap((n) => c.personas[n].modules || []))]);
-    for (const n of list) if (c.personas[n].options) for (const [k, v] of leaves(c.personas[n].options)) setPath(options, k, v);
-    const budget = BUDGETS[c.personas[list[0]].budget] ? c.personas[list[0]].budget : options.claude.budget;
-    setBudget(budget);
-    options.persona = list.join('+');
-    writeJson(F.options, options); push();
-    return { ok: true, persona: options.persona, modules: options.modules, budget };
-  };
-  const toggleModule = (id, on) => {
-    const c = catalog();
-    if (c.modules[id]?.status !== 'ready') return { ok: false, error: `no ready module "${id}"; ready: ${Object.entries(c.modules).filter(([, m]) => m.status === 'ready').map(([k]) => k).join(', ')}` };
-    const cur = new Set(options.modules);
-    if (on) cur.add(id); else cur.delete(id);
-    applyModules([...cur]);
-    options.persona = 'custom';
-    writeJson(F.options, options); push();
-    return { ok: true, modules: options.modules };
-  };
-  const personaSave = (name, about) => {
-    if (!PERSONA_ID.test(name || '')) return { ok: false, error: 'a persona name is 1-24 letters, digits, - or _' };
-    if (catalog().shipped.includes(name)) return { ok: false, error: `"${name}" is a shipped persona: pick another name` };
-    const mine = readJson(F.personas, {}), L = options.list;
-    mine[name] = { title: name, about: String(about || 'my own mix').slice(0, 200), modules: options.modules, budget: options.claude.budget,
-      options: { dock: options.dock, visual: options.visual, discussion: options.discussion, list: { karma: L.karma, classifier: L.classifier, velocity: L.velocity, seen: L.seen, groups: L.groups } } };
-    writeJson(F.personas, mine); push();
-    return { ok: true, saved: name, file: F.personas };
-  };
-  const personaImport = (data) => {
-    if (!isObj(data) || !PERSONA_ID.test(String(data.id || ''))) return { ok: false, error: 'a persona needs an "id" of 1-24 letters, digits, - or _' };
-    const c = catalog();
-    if (c.shipped.includes(data.id)) return { ok: false, error: `"${data.id}" is a shipped persona: use another id` };
-    const mods = Array.isArray(data.modules) ? data.modules.map(String) : [], bad = mods.find((m) => c.modules[m]?.status !== 'ready');
-    if (bad) return { ok: false, error: `unknown or not ready module "${bad}"` };
-    if (data.budget !== undefined && !BUDGETS[data.budget]) return { ok: false, error: 'budget: frugal | balanced | thorough' };
-    if (data.options !== undefined) {                      // pure data: known option paths and types only, never identity or paths
-      if (!isObj(data.options)) return { ok: false, error: 'options must be an object' };
-      const probe = clone(options);
-      for (const [k, v] of leaves(data.options)) {
-        if (/^(identity|bookmarks|claude|modules|persona)(\.|$)/.test(k)) return { ok: false, error: `option "${k}" cannot be set by a persona` };
-        try { setPath(probe, k, v); } catch (e) { return { ok: false, error: e.message }; }
-      }
+  const choosePersona = (name) => {
+    const c = catalog(), id = String(name || '').trim(), p = c.personas[id];
+    if (options.personaChosen) return { ok: false, error: `the persona is already chosen (${options.persona}) and cannot be changed` };
+    if (!p) return { ok: false, error: `no persona "${id}"; there are: ${Object.keys(c.personas).join(', ')}` };
+    const known = (p.modules || []).filter((m) => c.modules[m]?.status === 'ready');
+    for (const [mid, m] of Object.entries(c.modules)) {
+      if (m.status !== 'ready') continue;
+      for (const [k, v] of Object.entries(known.includes(mid) ? m.set || {} : m.off || {})) setPath(options, k, v);
     }
-    const str = (x, n) => String(x || '').slice(0, n), mine = readJson(F.personas, {});
-    mine[data.id] = { title: str(data.title || data.id, 40), about: str(data.about, 200), modules: mods, ...(data.budget ? { budget: data.budget } : {}), ...(data.options ? { options: data.options } : {}) };
-    writeJson(F.personas, mine); push();
-    return { ok: true, imported: data.id };
+    options.modules = known;
+    options.persona = id;
+    options.personaChosen = true;
+    setBudget(BUDGETS[p.budget] ? p.budget : options.claude.budget);
+    writeJson(F.options, options); push();
+    return { ok: true, persona: id, modules: options.modules, budget: options.claude.budget };
   };
+
 
   // ---- opportunities ("worth joining"): candidate threads for the dock, read-only from HN's public search, cached 5 minutes.
   // The page classifies them with the user's own groups and scores them (early, few comments, Ask HN): free, no Claude tokens.
@@ -473,8 +426,7 @@ async function serve() {
   await ctx.exposeBinding('__hnBridge', async (source, m) => {
     if (m.type === 'hello') return stateFor();
     if (m.type === 'karma') return fetchKarma(Array.isArray(m.users) ? m.users.slice(0, 60) : []);
-    if (m.type === 'persona') { const r = applyPersonas(String(m.name).split(',')); if (!r.ok) throw new Error(r.error); return options; }
-    if (m.type === 'module') { const r = toggleModule(String(m.id), !!m.on); if (!r.ok) throw new Error(r.error); return options; }
+    if (m.type === 'choose') { const r = choosePersona(m.name); if (!r.ok) throw new Error(r.error); return options; }
     if (m.type === 'opps') { const c = await fetchOpps(!!m.force); return { at: c.at, items: c.items }; }
     if (m.type === 'setOption') { if (m.path === 'identity.user' && !/^[A-Za-z0-9_-]{2,15}$/.test(String(m.value))) throw new Error('bad name'); setPath(options, String(m.path), m.value); writeJson(F.options, options); push(); return options; }
     if (m.type === 'bookmark') { const r = bmCmd(m); if (!r.ok) throw new Error(r.error); return bookmarks; }
@@ -494,6 +446,7 @@ async function serve() {
       if (m.kind === 'article' && !/^\d+$/.test(String(m.id))) throw new Error('bad story id');
       requests.push({ kind: m.kind, id: m.kind === 'article' ? String(m.id) : undefined, url: String(m.url || ''), at: new Date().toISOString() });
       writeJson(F.requests, requests);
+      push();
       return { pending: requests.length };
     }
     throw new Error('unknown bridge message');
@@ -550,14 +503,10 @@ async function serve() {
     group: async (m) => groupCmd(m),
     budget: async (m) => applyBudget(m.name),
     persona: async (m) => {
-      if (m.action === 'apply') return applyPersonas(String(m.name || '').split(','));
-      if (m.action === 'save') return personaSave(m.name, m.about);
-      if (m.action === 'import') return personaImport(m.data);
-      if (m.action === 'export') { const p = catalog().personas[m.name]; return p ? { ok: true, persona: { id: m.name, ...p } } : { ok: false, error: `no persona "${m.name}"` }; }
+      if (m.action === 'choose') return choosePersona(m.name);
       const c = catalog();
-      return { ok: true, current: options.persona, modules: options.modules, personas: c.personas, moduleList: Object.fromEntries(Object.entries(c.modules).map(([k, v]) => [k, `${v.status}: ${v.about}`])) };
+      return { ok: true, current: options.persona, chosen: !!options.personaChosen, modules: options.modules, personas: Object.fromEntries(Object.entries(c.personas).map(([k, v]) => [k, `${v.title}: ${v.about}`])) };
     },
-    module: async (m) => toggleModule(String(m.id), m.on !== false),
     opps: async (m) => { try { const c = await fetchOpps(!!m.force); return { ok: true, count: c.items.length, items: c.items }; } catch (e) { return { ok: false, error: `could not read HN's search: ${e.message}` }; } },
     bookmarks: async (m) => (m.md ? { ok: true, markdown: bmMarkdown(m.group, m.since, m.tag) } : { ok: true, bookmarks: m.group || m.since || m.tag ? bmFilter(m) : bookmarks }),
     article: async (m) => { try { return await fetchArticle(m.id); } catch (e) { return { ok: false, error: `could not fetch it: ${e.message}` }; } },
@@ -638,21 +587,19 @@ try {
   else if (cmd === 'status') print(await call({ cmd: 'status' }));
   else if (cmd === 'get') print(await call({ cmd: 'get', path: rest[0] }));
   else if (cmd === 'set') { if (rest.length < 2) throw new Error('set <path> <value>'); print(await call({ cmd: 'set', path: rest[0], value: parseValue(rest.slice(1).join(' ')) })); }
-  else if (cmd === 'reset') print(await call({ cmd: 'reset' }));
+  else if (cmd === 'reset') {
+    const r = await call({ cmd: 'reset' });
+    if (r.ok === false && /daemon is not running/.test(r.error)) { fs.rmSync(F.options, { force: true }); print({ ok: true, note: 'no daemon: the options file is removed, the next start uses the defaults and asks who you are' }); }
+    else print(r);
+  }
   else if (cmd === 'open') print(await call({ cmd: 'open', url: rest[0] }));
   else if (cmd === 'read') { const r = await call({ cmd: 'read' }); console.log(JSON.stringify(r)); process.exitCode = r.ok === false ? 1 : 0; }   // compact: Claude pays for every token
   else if (cmd === 'annotate') { if (!rest[0]) throw new Error('annotate <file.json>'); print(await call({ cmd: 'annotate', data: JSON.parse(fs.readFileSync(rest[0], 'utf8')) })); }
   else if (cmd === 'requests') print(await call({ cmd: 'requests', clear: rest.includes('--clear') }));
   else if (cmd === 'cost') print(await call({ cmd: 'cost' }));
   else if (cmd === 'budget') print(await call({ cmd: 'budget', name: rest[0] }));
-  else if (cmd === 'persona') {
-    const [action = 'list', a, ...more] = rest;
-    if (action === 'import') { if (!a) throw new Error('persona import <file.json>'); print(await call({ cmd: 'persona', action, data: JSON.parse(fs.readFileSync(a, 'utf8')) })); }
-    else if (action === 'export') { const r = await call({ cmd: 'persona', action, name: a }); if (r.ok) console.log(JSON.stringify(r.persona, null, 2)); else print(r); }
-    else print(await call({ cmd: 'persona', action, name: a, about: more.join(' ') }));
-  }
+  else if (cmd === 'persona') { const [action = 'list', a] = rest; print(await call({ cmd: 'persona', action, name: a })); }
   else if (cmd === 'opps') { const r = await call({ cmd: 'opps', force: rest.includes('--refresh') }); console.log(JSON.stringify(r)); process.exitCode = r.ok === false ? 1 : 0; }
-  else if (cmd === 'module') print(await call({ cmd: 'module', on: rest[0] !== 'off', id: rest[1] }));
   else if (cmd === 'article') { const r = await call({ cmd: 'article', id: rest[0] }); console.log(JSON.stringify(r)); process.exitCode = r.ok === false ? 1 : 0; }
   else if (cmd === 'bookmarks') {
     const o = {};
