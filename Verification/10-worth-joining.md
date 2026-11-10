@@ -23,7 +23,7 @@ Nothing is written to Hacker News: no post, comment, reply, vote, favourite, fla
 ![Worth joining](media/hn-10-joining.gif)
 [video](media/hn-10-joining.mp4)
 
-Recording: pending
+Recording: recorded 2026-11-10 with the Contributor persona by runToolsRecord (also the Contributor launch: media/hn-10-launch.gif, media/hn-10-persona.gif, media/hn-10-opens.gif); the automated test has not run yet
 
 ## Automated check
 Section `worth-joining` of the case `hackernews-features` in runToolsLocal: asserts the section exists for the Contributor only, that listed items respect the age and comment limits, and that changing the limits changes the list.
