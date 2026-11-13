@@ -8,7 +8,7 @@ description: Drive the joint session's shared browser (Chromium on DevTools port
 A joint session (started by `runJointLauncher.cs` or `runJointSession.cs`) is this terminal plus a shared
 Chromium-based browser the user watches, with its DevTools protocol on http://127.0.0.1:9222. You drive that window
 with Playwright through `browser.mjs`, the helper beside this SKILL.md (in `.claude/skills/joint-browser/`,
-`.agents/skills/joint-browser/` or `.pi/skills/joint-browser/`): one action per call, each printing a JSON report. It
+or `.agents/skills/joint-browser/` (codex and pi)): one action per call, each printing a JSON report. It
 attaches to the open window and never launches or closes a browser.
 
 ## 0. Ready
@@ -22,7 +22,19 @@ attaches to the open window and never launches or closes a browser.
    (installs `playwright-core` with npm into `~/.joint-browser/node`; no browser download, the shared one is used).
 3. `"browser": null`: no joint session browser is open; ask the user to start the launcher (or to close whatever else
    holds port 9222).
-4. Tell the user it is ready and ask what to do, unless the arguments already say it.
+4. Show the AI cost of the session at the bottom of every page: `node <this folder>/browser.mjs costbar start`. It
+   starts a background daemon that injects a thin strip into every page, including the user's own navigation:
+   "AI cost  session $x | group G $y" (the current session, i.e. the folder's newest, and its session group's
+   total over every launch in it; `*` = an estimate at a default price). It re-reads the cost every 60 s with
+   `runJointCostAST.cs` (found from the project folder; `JOINT_COST_READER` names it elsewhere; it needs .NET). The strip
+   ignores the pointer, so it never blocks a click, but it is in screenshots. "AI cost: unavailable (...)" is an error:
+   tell the user the message; never state a number the bar does not show. `costbar status` says whether it runs and the
+   last cost; `costbar stop` removes it. The joint-hackernews skill draws its own bar and the strip steps aside there.
+   **Session groups**: a launch is tracked in a session group, named with the launcher's `--group <name>` ("Default" when
+   none is given). The bar's group total adds up every session of the current session's group, whatever launch started it,
+   so several launches of one piece of work add up. `node <this folder>/browser.mjs costbar group` lists the groups with
+   their sessions and cost. Groups are made by the launch (`runJointLauncher.cs --group "Sprint 42"`), not from here.
+5. Tell the user it is ready and ask what to do, unless the arguments already say it.
 
 ## 1. Drive
 

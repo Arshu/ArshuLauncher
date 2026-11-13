@@ -14,11 +14,11 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// runJointCost: runJointCost.cs (tested and published, left unchanged) restructured as the shape a lean4 port proves:
+/// runJointCostAST: runJointCostAST.cs (tested and published, left unchanged) restructured as the shape a lean4 port proves:
 /// the parsing of the command line, of the transcripts, the store and the ledger, the pricing, the merge, the grouping
 /// and every rendering are functions of their input alone (a transcript arrives as its lines, a folder test as a
 /// predicate), and the effects (reading the files, the store write, the ccusage process, the watcher, the console) sit
-/// around them in Run, CollectAndMerge, ReadLive and Watch. The same command line, output and files as runJointCost.cs.
+/// around them in Run, CollectAndMerge, ReadLive and Watch. The same command line, output and files as runJointCostAST.cs.
 ///
 /// The cost reader of the joint tools. It lists every harness session (Claude Code, codex, pi) whose working folder is
 /// the given folder, whoever started it, one row per (session, model), newest first, with a TOTAL row, as a markdown
@@ -29,12 +29,12 @@ using System.Threading.Tasks;
 ///
 /// Repository-independent single file; needs .NET 10+ only. Claude and codex costs come from the built-in price table; --updatecost
 /// runs ccusage (pinned, needs Node) to price them with its numbers instead.
-/// pi records its own cost. See runJointCost.md.
+/// pi records its own cost. See runJointCostAST.md.
 ///
-/// Usage: dotnet run csharp/ArshuCost/runJointCost.cs -- [--folder &lt;path&gt;] [--harness claude,codex,pi] [--json] [--no-snapshot]
+/// Usage: dotnet run csharp/ArshuCost/runJointCostAST.cs -- [--folder &lt;path&gt;] [--harness claude,codex,pi] [--json] [--no-snapshot]
 ///        [--updatecost] [--groups] | --watch --harness &lt;one&gt; [--interval-minutes 5] [--idle-minutes 10]
 /// </summary>
-class RunJointCost
+class RunJointCostAST
 {
     private const string CcusagePinned = "20.0.17";
     private const string StoreFolder = ".joint-cost";
@@ -46,12 +46,47 @@ class RunJointCost
     internal static readonly string[] Harnesses = { "claude", "codex", "pi" };
     internal static readonly TimeSpan MatchWindow = TimeSpan.FromSeconds(120);
 
+    /// <summary>The exception a refusal is thrown as: a bad option, a malformed record or ccusage answer, a process that fails, a lock.</summary>
+    internal enum CostKind { Argument, Data, Operation, Io }
+
+    /// <summary>Why the reader refuses (lean4 CostError). Message is the text the tool prints; ToException is the refusal as the
+    /// exception of its kind, which is how the reader's shell (Launch) and its callers see it.</summary>
+    internal sealed class CostError
+    {
+        private readonly CostKind kind;
+        private readonly string text;
+
+        internal CostError(CostKind kind, string text)
+        {
+            this.kind = kind;
+            this.text = text;
+        }
+
+        internal string Message() => text;
+
+        internal Exception ToException() => kind switch
+        {
+            CostKind.Argument => new ArgumentException(Message()),
+            CostKind.Data => new InvalidDataException(Message()),
+            CostKind.Operation => new InvalidOperationException(Message()),
+            _ => new IOException(Message()),
+        };
+
+        internal static Exception Argument(string text) => new CostError(CostKind.Argument, text).ToException();
+
+        internal static Exception Data(string text) => new CostError(CostKind.Data, text).ToException();
+
+        internal static Exception Operation(string text) => new CostError(CostKind.Operation, text).ToException();
+
+        internal static Exception Io(string text) => new CostError(CostKind.Io, text).ToException();
+    }
+
     /// <summary>One (harness, session, model) with every token field, its cost and where the cost came from.</summary>
     internal sealed record Usage(string Harness, string SessionId, string Model, long Input, long Output, long CacheRead,
         long CacheWrite, long? Thinking, double Cost, string CostSource, DateTimeOffset First, DateTimeOffset Last,
         string Folder, DateTimeOffset Snapshot)
     {
-        public long Tokens => RunJointCost.Tokens(this);
+        public long Tokens => RunJointCostAST.Tokens(this);
     }
 
     /// <summary>A launch ledger line: the launcher or session tool that started a harness in a folder, when, and the session
@@ -70,7 +105,7 @@ class RunJointCost
     internal sealed record Acc(long Input, long Output, long CacheRead, long CacheWrite, long? Thinking, double Cost)
     {
         public Acc Add(long input, long output, long cacheRead, long cacheWrite, long? thinking) =>
-            RunJointCost.Add(this, input, output, cacheRead, cacheWrite, thinking);
+            RunJointCostAST.Add(this, input, output, cacheRead, cacheWrite, thinking);
     }
 
     /// <summary>The token total of a row: input, output, cache read and cache write (lean4 Usage.tokens).</summary>
@@ -122,18 +157,18 @@ class RunJointCost
     // ---- utilities: they call no other method of the tool ------------------------------------------------------------
 
     private static double Minutes(string setting, string name) =>
-        double.TryParse(setting, NumberStyles.Float, CultureInfo.InvariantCulture, out double m) && m > 0 ? m : throw new ArgumentException($"{name} needs a positive number of minutes, not {setting}");
+        double.TryParse(setting, NumberStyles.Float, CultureInfo.InvariantCulture, out double m) && m > 0 ? m : throw CostError.Argument($"{name} needs a positive number of minutes, not {setting}");
 
     /// <summary>The value of the option at <paramref name="index"/>: the argument after it.</summary>
     private static string ArgValue(string[] args, int index) =>
-        index + 1 < args.Length ? args[index + 1] : throw new ArgumentException($"{args[index]} needs a value");
+        index + 1 < args.Length ? args[index + 1] : throw CostError.Argument($"{args[index]} needs a value");
 
     /// <summary>The watcher's options are legal together: one harness, and none of the options that print a table.</summary>
     internal static void CheckWatch(CostArgs a)
     {
         if (!a.Watch) return;
-        if (a.Harnesses.Count != 1) throw new ArgumentException("--watch needs exactly one --harness");
-        if (!a.Snapshot || a.Json || a.UpdateCost) throw new ArgumentException("--watch snapshots and prints no table: it takes none of --no-snapshot, --json and --updatecost");
+        if (a.Harnesses.Count != 1) throw CostError.Argument("--watch needs exactly one --harness");
+        if (!a.Snapshot || a.Json || a.UpdateCost) throw CostError.Argument("--watch snapshots and prints no table: it takes none of --no-snapshot, --json and --updatecost");
     }
 
     /// <summary>The quotient of a division that rounds toward negative infinity (Lean's Int.ediv for a positive divisor).</summary>
@@ -167,11 +202,39 @@ class RunJointCost
         return negative ? "-" + shown : shown;
     }
 
-    /// <summary>The value mantissa * 2^exponent in ten-thousandths, rounded half up (so halves away from zero on the magnitude).</summary>
-    internal static System.Numerics.BigInteger Fixed4Scaled(System.Numerics.BigInteger mantissa, int exponent) =>
-        exponent >= 0
-            ? mantissa * 10000 * System.Numerics.BigInteger.Pow(2, exponent)
-            : (2 * mantissa * 10000 + System.Numerics.BigInteger.Pow(2, -exponent)) / (2 * System.Numerics.BigInteger.Pow(2, -exponent));
+    /// <summary>Whether 10^k is at most the positive number num / den.</summary>
+    internal static bool PowerOfTenWithin(int k, System.Numerics.BigInteger num, System.Numerics.BigInteger den) =>
+        k >= 0 ? System.Numerics.BigInteger.Pow(10, k) * den <= num : den <= num * System.Numerics.BigInteger.Pow(10, -k);
+
+    /// <summary>The k with 10^k &lt;= num / den &lt; 10^(k+1), for positive num and den.</summary>
+    internal static int DecimalExponent(System.Numerics.BigInteger num, System.Numerics.BigInteger den)
+    {
+        int k = (int)(((long)num.GetBitLength() - (long)den.GetBitLength()) * 30103 / 100000);
+        while (!PowerOfTenWithin(k, num, den)) k--;
+        while (PowerOfTenWithin(k + 1, num, den)) k++;
+        return k;
+    }
+
+    /// <summary>The value mantissa * 2^exponent in ten-thousandths as the runtime's "0.0000" prints it: the runtime first rounds a double
+    /// to its 15 significant digits (exactly, a tie to the even digit), then rounds that decimal to four places, half up. This differs
+    /// from the exact value rounded half up on a value such as 0.00015 (the double is a little below the tie, its 15 digits are exactly it).</summary>
+    internal static System.Numerics.BigInteger Fixed4Rounded(System.Numerics.BigInteger mantissa, int exponent)
+    {
+        if (mantissa.IsZero) return 0;
+        System.Numerics.BigInteger num = exponent >= 0 ? mantissa * System.Numerics.BigInteger.Pow(2, exponent) : mantissa;
+        System.Numerics.BigInteger den = exponent >= 0 ? 1 : System.Numerics.BigInteger.Pow(2, -exponent);
+        int k = DecimalExponent(num, den);
+        int shift = 14 - k;
+        System.Numerics.BigInteger n = shift >= 0 ? num * System.Numerics.BigInteger.Pow(10, shift) : num;
+        System.Numerics.BigInteger d = shift >= 0 ? den : den * System.Numerics.BigInteger.Pow(10, -shift);
+        System.Numerics.BigInteger q = System.Numerics.BigInteger.DivRem(n, d, out System.Numerics.BigInteger r);
+        System.Numerics.BigInteger twice = 2 * r;
+        if (twice > d || (twice == d && !q.IsEven)) q += 1;
+        // q * 10^(k-14) in ten-thousandths is q * 10^(k-10)
+        if (k >= 10) return q * System.Numerics.BigInteger.Pow(10, k - 10);
+        System.Numerics.BigInteger unit = System.Numerics.BigInteger.Pow(10, 10 - k);
+        return (q + unit / 2) / unit;
+    }
 
     private static JsonElement? Member(JsonElement e, params string[] path)
     {
@@ -201,9 +264,9 @@ class RunJointCost
             }
             catch (JsonException e)
             {
-                throw new InvalidDataException($"{path}:{n}: malformed JSON record ({e.Message})");
+                throw CostError.Data($"{path}:{n}: malformed JSON record ({e.Message})");
             }
-            if (record.ValueKind != JsonValueKind.Object) throw new InvalidDataException($"{path}:{n}: record is not a JSON object");
+            if (record.ValueKind != JsonValueKind.Object) throw CostError.Data($"{path}:{n}: record is not a JSON object");
             yield return (n, record);
         }
     }
@@ -240,7 +303,7 @@ class RunJointCost
     private static List<Usage> SessionRows(string harness, string id, string folder, Dictionary<string, Acc> models, DateTimeOffset? first,
         DateTimeOffset? last, string costSource, string file, DateTimeOffset now)
     {
-        if (first == null || last == null) throw new InvalidDataException($"{file}: session {id} has no timestamps");
+        if (first == null || last == null) throw CostError.Data($"{file}: session {id} has no timestamps");
         var byModel = models.Count == 0 ? new Dictionary<string, Acc> { [NoModel] = NoAcc } : models;
         return byModel.OrderBy(m => m.Key, StringComparer.Ordinal).Select(m => new Usage(harness, id, m.Key, m.Value.Input,
             m.Value.Output, m.Value.CacheRead, m.Value.CacheWrite, m.Value.Thinking, m.Value.Cost, costSource, first.Value,
@@ -254,7 +317,7 @@ class RunJointCost
     private static string CcusageJson(string tool, string stdout)
     {
         int brace = stdout.IndexOf('{');
-        return brace >= 0 ? stdout[brace..] : throw new InvalidDataException($"ccusage {tool} session printed no JSON");
+        return brace >= 0 ? stdout[brace..] : throw CostError.Data($"ccusage {tool} session printed no JSON");
     }
 
     private static string StartedBy(Usage u, Dictionary<(string, string), LaunchEntry> launched) =>
@@ -306,6 +369,59 @@ class RunJointCost
         while ((text = reader.ReadLine()) != null) yield return text;
     }
 
+    /// <summary>The lines of a file's bytes, split at LF, CR LF or CR as StreamReader.ReadLine does, a leading byte order mark dropped.</summary>
+    internal static List<string> LinesOfBytes(string path, byte[] bytes)
+    {
+        var lines = new List<string>();
+        using var reader = new StreamReader(new MemoryStream(bytes));
+        string? text;
+        while ((text = reader.ReadLine()) != null) lines.Add(text);
+        return lines;
+    }
+
+    /// <summary>What the head of a file has told so far: its bytes, whether a byte with content has come, and whether the first
+    /// record has ended (the bytes after that are not wanted).</summary>
+    internal sealed class HeadScan
+    {
+        internal readonly List<byte> Bytes = new();
+        internal bool SeenContent;
+        internal bool Done;
+
+        /// <summary>One byte of the head: kept until the first record's terminator; a byte that is not blank (or part of a byte
+        /// order mark) is content. The scan is threaded through the bytes of one head, so it is updated in place and returned.</summary>
+        internal HeadScan Push(byte b)
+        {
+            if (Done) return this;
+            Bytes.Add(b);
+            if (b == 10 || b == 13) Done = SeenContent;
+            else if (!(b == 0 || b == 9 || b == 11 || b == 12 || b == 32 || b == 0xEF || b == 0xBB || b == 0xBF)) SeenContent = true;
+            return this;
+        }
+    }
+
+    /// <summary>Reads chunks until the first record has ended or the file does (the fuel is the number of chunks the file can have).</summary>
+    internal static HeadScan ReadHeadChunks(Stream handle, HeadScan scan, int fuel)
+    {
+        var chunk = new byte[65536];
+        while (fuel > 0 && !scan.Done)
+        {
+            fuel--;
+            int read = handle.Read(chunk, 0, chunk.Length);
+            if (read == 0) break;
+            for (int i = 0; i < read; i++) scan = scan.Push(chunk[i]);
+        }
+        return scan;
+    }
+
+    /// <summary>The lines of a file up to and including its first record (the first line with content), read in chunks so that a
+    /// large transcript is not read whole. Opened shareable like ReadLines.</summary>
+    internal static List<string> ReadHeadLines(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        HeadScan scan = ReadHeadChunks(stream, new HeadScan(), (int)(stream.Length / 65536) + 2);
+        return LinesOfBytes(path, scan.Bytes.ToArray());
+    }
+
     private static string[] Jsonl(string dir) => Directory.Exists(dir) ? Directory.GetFiles(dir, "*.jsonl") : Array.Empty<string>();
 
     private static bool PidAlive(int pid)
@@ -334,14 +450,14 @@ class RunJointCost
         }
         catch (System.ComponentModel.Win32Exception e)
         {
-            throw new InvalidOperationException($"cannot run {what}: {start.FileName} is not available (Node.js is required for Claude and codex costs): {e.Message}");
+            throw CostError.Operation($"cannot run {what}: {start.FileName} is not available (Node.js is required for Claude and codex costs): {e.Message}");
         }
         using (process)
         {
             Task<string> err = process.StandardError.ReadToEndAsync();
             string stdout = process.StandardOutput.ReadToEnd();
             process.WaitForExit();
-            if (process.ExitCode != 0) throw new InvalidOperationException($"{what} failed with exit code {process.ExitCode}: {err.Result.Trim()}");
+            if (process.ExitCode != 0) throw CostError.Operation($"{what} failed with exit code {process.ExitCode}: {err.Result.Trim()}");
             return stdout;
         }
     }
@@ -351,7 +467,7 @@ class RunJointCost
     {
         string name = Path.GetFileNameWithoutExtension(file);
         string id = name.Length >= 36 ? name[^36..] : "";
-        if (!Guid.TryParse(id, out _)) throw new InvalidDataException($"{file}: the file name does not end in the rollout uuid");
+        if (!Guid.TryParse(id, out _)) throw CostError.Data($"{file}: the file name does not end in the rollout uuid");
         return id;
     }
 
@@ -389,15 +505,14 @@ class RunJointCost
             $"{year:D4}-{month:D2}-{day:D2}T{secondOfDay / 3600:D2}:{secondOfDay % 3600 / 60:D2}:{secondOfDay % 60:D2}.{FloorMod(milliseconds, 1000):D3}Z");
     }
 
-    /// <summary>The exact model of a four-decimal text for a finite double given as its sign and mantissa * 2^exponent: the exact value
-    /// rounded to four decimals, halves away from zero. It is the Lean port's text and the subject of its laws; the tool prints through
-    /// Fixed4, which uses the runtime's own "0.0000" (the runtime rounds the double's 15-digit decimal, so the two differ on a tie such
-    /// as 0.00015 that the exact value misses).</summary>
+    /// <summary>The model of a four-decimal text for a finite double given as its sign and mantissa * 2^exponent: the runtime's 15
+    /// significant digits of the exact value, rounded to four decimals half up (Fixed4Rounded). It is the Lean port's text and the
+    /// subject of its laws; the tool prints through Fixed4, which uses the runtime's own "0.0000", and a test holds the two equal.</summary>
     internal static string Fixed4Core(bool negative, System.Numerics.BigInteger mantissa, int exponent) =>
-        Fixed4Text(negative, Fixed4Scaled(mantissa, exponent));
+        Fixed4Text(negative, Fixed4Rounded(mantissa, exponent));
 
     /// <summary>x.ToString("0.0000", InvariantCulture). A value that is a whole number of sixteenths below 1e9 has at most four decimals
-    /// and at most 14 digits, so the runtime's 15-digit rounding changes nothing and the exact Fixed4Core prints the same text.</summary>
+    /// and at most 14 digits, so the runtime's 15-digit rounding changes nothing and Fixed4Core prints the same text.</summary>
     private static string Fixed4(double x)
     {
         double sixteenths = x * 16;
@@ -414,9 +529,9 @@ class RunJointCost
     private static DateTimeOffset Time(string stamp, string file, int line)
     {
         if (!DateTimeOffset.TryParse(stamp, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind | DateTimeStyles.AssumeUniversal, out var t))
-            throw new InvalidDataException($"{file}:{line}: \"{stamp}\" is not a timestamp");
+            throw CostError.Data($"{file}:{line}: \"{stamp}\" is not a timestamp");
         DateTime utc = t.UtcDateTime;
-        if (utc.Day > MonthLength(utc.Year, utc.Month)) throw new InvalidDataException($"{file}:{line}: \"{stamp}\" is not a timestamp");
+        if (utc.Day > MonthLength(utc.Year, utc.Month)) throw CostError.Data($"{file}:{line}: \"{stamp}\" is not a timestamp");
         const long unixEpochTicks = 621355968000000000L;
         return new DateTimeOffset(unixEpochTicks + DaysFromCivil(utc.Year, utc.Month, utc.Day) * TimeSpan.TicksPerDay + utc.TimeOfDay.Ticks, TimeSpan.Zero);
     }
@@ -432,31 +547,36 @@ class RunJointCost
 
     private static bool Unpriced(Usage u) => u.CostSource == "ccusage" && u.Cost == 0 && u.Tokens > 0;
 
-    private static CostArgs ParseArgs(string[] args, string cwd)
+    /// <summary>Reads the options from <paramref name="index"/> on, one step per argument (the fuel is the number of arguments): each
+    /// option sets its field, a value option takes the argument after it, anything else is refused.</summary>
+    internal static CostArgs ReadOptions(string[] args, CostArgs a, int fuel, int index)
     {
-        string folder = cwd;
-        var harnesses = Harnesses.ToList();
-        bool json = false, snapshot = true, watch = false, listGroups = false, updateCost = false;
-        double intervalMinutes = 5, idleMinutes = 10;
-        for (int i = 0; i < args.Length; i++)
+        while (fuel > 0 && index < args.Length)
         {
-            switch (args[i])
+            fuel--;
+            switch (args[index])
             {
-                case "--folder": folder = ArgValue(args, i); i++; break;
-                case "--harness": harnesses = ArgValue(args, i).Split(',').Select(h => h.Trim()).ToList(); i++; break;
-                case "--json": json = true; break;
-                case "--no-snapshot": snapshot = false; break;
-                case "--updatecost": updateCost = true; break;
-                case "--watch": watch = true; break;
-                case "--groups": listGroups = true; break;
-                case "--interval-minutes": intervalMinutes = Minutes(ArgValue(args, i), "--interval-minutes"); i++; break;
-                case "--idle-minutes": idleMinutes = Minutes(ArgValue(args, i), "--idle-minutes"); i++; break;
-                default: throw new ArgumentException($"unknown argument {args[i]}; usage: {UsageLine}");
+                case "--folder": a = a with { Folder = ArgValue(args, index) }; index += 2; break;
+                case "--harness": a = a with { Harnesses = ArgValue(args, index).Split(',').Select(h => h.Trim()).ToList() }; index += 2; break;
+                case "--json": a = a with { Json = true }; index++; break;
+                case "--no-snapshot": a = a with { Snapshot = false }; index++; break;
+                case "--updatecost": a = a with { UpdateCost = true }; index++; break;
+                case "--watch": a = a with { Watch = true }; index++; break;
+                case "--groups": a = a with { Groups = true }; index++; break;
+                case "--interval-minutes": a = a with { IntervalMinutes = Minutes(ArgValue(args, index), "--interval-minutes") }; index += 2; break;
+                case "--idle-minutes": a = a with { IdleMinutes = Minutes(ArgValue(args, index), "--idle-minutes") }; index += 2; break;
+                default: throw CostError.Argument($"unknown argument {args[index]}; usage: {UsageLine}");
             }
         }
-        foreach (string h in harnesses)
-            if (!Harnesses.Contains(h)) throw new ArgumentException($"unknown harness {h}; use claude, codex or pi");
-        return new CostArgs(folder, harnesses, json, snapshot, watch, listGroups, updateCost, intervalMinutes, idleMinutes);
+        return a;
+    }
+
+    private static CostArgs ParseArgs(string[] args, string cwd)
+    {
+        CostArgs a = ReadOptions(args, new CostArgs(cwd, Harnesses.ToList(), false, true, false, false, false, 5, 10), args.Length, 0);
+        foreach (string h in a.Harnesses)
+            if (!Harnesses.Contains(h)) throw CostError.Argument($"unknown harness {h}; use claude, codex or pi");
+        return a;
     }
 
     private static string LogLine(DateTimeOffset now, string text) => $"{Iso(now)} {text}\n";
@@ -469,7 +589,7 @@ class RunJointCost
     {
         if (Member(e, path) is not { } v) return null;
         if (v.ValueKind != JsonValueKind.Number || !v.TryGetInt64(out long n))
-            throw new InvalidDataException($"{file}:{line}: \"{string.Join('.', path)}\" is not an integer");
+            throw CostError.Data($"{file}:{line}: \"{string.Join('.', path)}\" is not an integer");
         return n;
     }
 
@@ -477,6 +597,20 @@ class RunJointCost
     /// expected normalized (NormalizeFolder).</summary>
     internal static bool SameFolder(string a, string b) =>
         string.Equals(TrimFolder(a), TrimFolder(b), OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    /// <summary>Whether folder <paramref name="a"/> is folder <paramref name="b"/> or lies under it, component-wise: /a/b/c is under /a/b,
+    /// /a/bc is not. Trailing separators and (on Windows) case do not matter, as in SameFolder. A transcript whose cwd is a subfolder of
+    /// the folder (a harness that did cd folder/skills) belongs to the folder.</summary>
+    internal static bool UnderFolder(string a, string b)
+    {
+        string x = TrimFolder(a), y = TrimFolder(b);
+        StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.Equals(x, y, comparison)) return true;
+        if (y.Length == 0 || x.Length <= y.Length || !x.StartsWith(y, comparison)) return false;
+        return IsSeparator(y[^1]) || IsSeparator(x[y.Length]);
+    }
+
+    private static bool IsSeparator(char c) => c == Path.DirectorySeparatorChar || c == Path.AltDirectorySeparatorChar;
 
     /// <summary>Prices a row nothing else priced. A model in ListPrices is added to a ccusage row (ccusage reports 0 for it)
     /// or set on a pi row that recorded no cost. A model with no price at all is charged the harness's default model
@@ -498,12 +632,12 @@ class RunJointCost
         {
             using var doc = JsonDocument.Parse(json);
             if (Member(doc.RootElement, "sessions") is not { ValueKind: JsonValueKind.Array } sessions)
-                throw new InvalidDataException("ccusage output has no \"sessions\" array");
+                throw CostError.Data("ccusage output has no \"sessions\" array");
             return sessions.EnumerateArray().Select(s => s.Clone()).ToList();
         }
         catch (JsonException e)
         {
-            throw new InvalidDataException("ccusage output is not JSON: " + e.Message);
+            throw CostError.Data("ccusage output is not JSON: " + e.Message);
         }
     }
 
@@ -529,10 +663,10 @@ class RunJointCost
     private static string NormalizeFolder(string folder) => TrimFolder(Path.GetFullPath(folder));
 
     private static string RequiredText(JsonElement e, string file, int line, params string[] path) =>
-        Text(e, path) ?? throw new InvalidDataException($"{file}:{line}: missing string \"{string.Join('.', path)}\"");
+        Text(e, path) ?? throw CostError.Data($"{file}:{line}: missing string \"{string.Join('.', path)}\"");
 
     private static long RequiredNumber(JsonElement e, string file, int line, params string[] path) =>
-        Number(e, file, line, path) ?? throw new InvalidDataException($"{file}:{line}: missing number \"{string.Join('.', path)}\"");
+        Number(e, file, line, path) ?? throw CostError.Data($"{file}:{line}: missing number \"{string.Join('.', path)}\"");
 
     /// <summary>Widens the session span by the record's own "timestamp" (absent on bookkeeping records).</summary>
     private static (DateTimeOffset? First, DateTimeOffset? Last) WidenSpan(JsonElement record, string file, int line, DateTimeOffset? first, DateTimeOffset? last)
@@ -557,16 +691,16 @@ class RunJointCost
         var costs = new Dictionary<(string, string), double>();
         foreach (JsonElement s in CcusageSessions(ccusageJson))
         {
-            string id = Text(s, "sessionId") ?? throw new InvalidDataException("ccusage claude session without sessionId");
+            string id = Text(s, "sessionId") ?? throw CostError.Data("ccusage claude session without sessionId");
             if (Member(s, "modelBreakdowns") is not { ValueKind: JsonValueKind.Array } breakdowns)
-                throw new InvalidDataException($"ccusage claude session {id} has no modelBreakdowns");
+                throw CostError.Data($"ccusage claude session {id} has no modelBreakdowns");
             foreach (JsonElement b in breakdowns.EnumerateArray())
-                costs[(id, Text(b, "modelName") ?? throw new InvalidDataException($"ccusage session {id}: breakdown without modelName"))] =
-                    Member(b, "cost") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw new InvalidDataException($"ccusage session {id}: breakdown without cost");
+                costs[(id, Text(b, "modelName") ?? throw CostError.Data($"ccusage session {id}: breakdown without modelName"))] =
+                    Member(b, "cost") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw CostError.Data($"ccusage session {id}: breakdown without cost");
         }
         return rows.Select(r => r.Model == NoModel ? r : costs.TryGetValue((r.SessionId, r.Model), out double c)
             ? r with { Cost = c }
-            : throw new InvalidDataException($"ccusage reports no cost for claude session {r.SessionId}, model {r.Model}")).Select(r => AddListPrice(r)).ToList();
+            : throw CostError.Data($"ccusage reports no cost for claude session {r.SessionId}, model {r.Model}")).Select(r => AddListPrice(r)).ToList();
     }
 
     /// <summary>ccusage prices a codex session as a whole; the cost goes on the session's largest model row (the others
@@ -576,9 +710,9 @@ class RunJointCost
         var costs = new Dictionary<string, double>();
         foreach (JsonElement s in CcusageSessions(ccusageJson))
         {
-            string file = Text(s, "sessionFile") ?? throw new InvalidDataException("ccusage codex session without sessionFile");
+            string file = Text(s, "sessionFile") ?? throw CostError.Data("ccusage codex session without sessionFile");
             costs[file.Length >= 36 ? file[^36..] : file] =
-                Member(s, "costUSD") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw new InvalidDataException($"ccusage codex session {file} has no costUSD");
+                Member(s, "costUSD") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw CostError.Data($"ccusage codex session {file} has no costUSD");
         }
         var result = new List<Usage>();
         foreach (var session in rows.GroupBy(r => r.SessionId))
@@ -586,11 +720,45 @@ class RunJointCost
             var sessionRows = session.ToList();
             if (sessionRows.All(r => r.Tokens == 0)) { result.AddRange(sessionRows); continue; }  // no usage recorded: ccusage lists no such session
             if (!costs.TryGetValue(session.Key, out double cost))
-                throw new InvalidDataException($"ccusage reports no cost for codex session {session.Key}");
+                throw CostError.Data($"ccusage reports no cost for codex session {session.Key}");
             Usage largest = sessionRows.OrderByDescending(r => r.Tokens).First();
             result.AddRange(sessionRows.Select(r => AddListPrice(r == largest ? r with { Cost = cost } : r, defaultPrice: cost == 0)));
         }
         return result;
+    }
+
+    /// <summary>What a Claude transcript has told so far: its messages by message and request id (the last record of an API
+    /// response is final), and the span of its timestamps. The message table is threaded through the records of one transcript
+    /// and updated in place.</summary>
+    internal sealed record ClaudeScan(Dictionary<string, ClaudeMessage> Messages, DateTimeOffset? First, DateTimeOffset? Last);
+
+    /// <summary>One API response of a Claude transcript: its model and token counts.</summary>
+    internal sealed record ClaudeMessage(string Model, long In, long Out, long CR, long CW, long? Think);
+
+    /// <summary>One record of a Claude transcript: null when it is of another folder, else the scan with the record's message and span.</summary>
+    internal static ClaudeScan? ClaudeRecord(string file, Func<string, bool> inFolder, ClaudeScan scan, int line, JsonElement record)
+    {
+        if (Text(record, "cwd") is { } cwd && !inFolder(cwd)) return null;
+        var (first, last) = WidenSpan(record, file, line, scan.First, scan.Last);
+        scan = scan with { First = first, Last = last };
+        if (Text(record, "type") != "assistant" || Member(record, "message", "usage") is null) return scan;
+        string model = RequiredText(record, file, line, "message", "model");
+        if (model == "<synthetic>") return scan;
+        string key = (Text(record, "message", "id") ?? RequiredText(record, file, line, "uuid")) + "|" + Text(record, "requestId");
+        scan.Messages[key] = new ClaudeMessage(model, RequiredNumber(record, file, line, "message", "usage", "input_tokens"),
+            RequiredNumber(record, file, line, "message", "usage", "output_tokens"),
+            Number(record, file, line, "message", "usage", "cache_read_input_tokens") ?? 0,
+            Number(record, file, line, "message", "usage", "cache_creation_input_tokens") ?? 0,
+            Number(record, file, line, "message", "usage", "output_tokens_details", "thinking_tokens"));
+        return scan;
+    }
+
+    /// <summary>The totals per model of a list of messages.</summary>
+    internal static Dictionary<string, Acc> MessageModels(IEnumerable<ClaudeMessage> messages)
+    {
+        var models = new Dictionary<string, Acc>();
+        foreach (var m in messages) models[m.Model] = ModelAcc(models, m.Model).Add(m.In, m.Out, m.CR, m.CW, m.Think);
+        return models;
     }
 
     /// <summary>The Claude Code session of one transcript (its lines): the usage per model, or no rows when the transcript is
@@ -599,25 +767,13 @@ class RunJointCost
     internal static List<Usage> ClaudeSession(string file, IEnumerable<string> lines, string folder, Func<string, bool> inFolder, DateTimeOffset now)
     {
         string id = Path.GetFileNameWithoutExtension(file);
-        var messages = new Dictionary<string, (string Model, long In, long Out, long CR, long CW, long? Think)>();
-        DateTimeOffset? first = null, last = null;
+        var scan = new ClaudeScan(new Dictionary<string, ClaudeMessage>(), null, null);
         foreach (var (line, record) in JsonLines(file, lines))
         {
-            if (Text(record, "cwd") is { } cwd && !inFolder(cwd)) return new List<Usage>();
-            (first, last) = WidenSpan(record, file, line, first, last);
-            if (Text(record, "type") != "assistant" || Member(record, "message", "usage") is null) continue;
-            string model = RequiredText(record, file, line, "message", "model");
-            if (model == "<synthetic>") continue;
-            string key = (Text(record, "message", "id") ?? RequiredText(record, file, line, "uuid")) + "|" + Text(record, "requestId");
-            messages[key] = (model, RequiredNumber(record, file, line, "message", "usage", "input_tokens"),
-                RequiredNumber(record, file, line, "message", "usage", "output_tokens"),
-                Number(record, file, line, "message", "usage", "cache_read_input_tokens") ?? 0,
-                Number(record, file, line, "message", "usage", "cache_creation_input_tokens") ?? 0,
-                Number(record, file, line, "message", "usage", "output_tokens_details", "thinking_tokens"));
+            if (ClaudeRecord(file, inFolder, scan, line, record) is not { } next) return new List<Usage>();
+            scan = next;
         }
-        var models = new Dictionary<string, Acc>();
-        foreach (var m in messages.Values) models[m.Model] = ModelAcc(models, m.Model).Add(m.In, m.Out, m.CR, m.CW, m.Think);
-        return SessionRows("claude", id, folder, models, first, last, "ccusage", file, now);
+        return SessionRows("claude", id, folder, MessageModels(scan.Messages.Values), scan.First, scan.Last, "ccusage", file, now);
     }
 
     /// <summary>Whether a rollout is of the folder, from the first lines of its file (at least up to the first record): its file name,
@@ -628,49 +784,91 @@ class RunJointCost
         CodexRolloutId(file);
         foreach (var (line, record) in JsonLines(file, head))
         {
-            if (Text(record, "type") != "session_meta") throw new InvalidDataException($"{file}:{line}: the first record is not session_meta");
+            if (Text(record, "type") != "session_meta") throw CostError.Data($"{file}:{line}: the first record is not session_meta");
             return inFolder(RequiredText(record, file, line, "payload", "cwd"));
         }
         return false;
     }
 
+    /// <summary>The cumulative token counters of a codex rollout: input, cached input, cache write, output and reasoning output.</summary>
+    internal sealed record Counters(long Input, long Cached, long Write, long Output, long Reason);
+
+    /// <summary>What a codex rollout has told so far: the models' totals (updated in place), the span, the model of the turn, the
+    /// counters of the last token_count, whether the session_meta record has been seen and the records skipped so far (file:line and
+    /// why: a token_count whose cumulative counters went down is skipped, it is not counted and the run goes on).</summary>
+    internal sealed record CodexScan(Dictionary<string, Acc> Models, DateTimeOffset? First, DateTimeOffset? Last, string? Model, Counters Prev, bool SeenMeta, string[] Skips);
+
+    /// <summary>Whether a token_count's cumulative counters are below those of the last one (a record to skip).</summary>
+    internal static bool CountersDown(Counters prev, long tIn, long tCached, long tWrite, long tOut, long tReason) =>
+        tIn < prev.Input || tCached < prev.Cached || tWrite < prev.Write || tOut < prev.Output || tReason < prev.Reason;
+
+    /// <summary>One record of a codex rollout: null when the rollout is of another folder, else the scan with the record's growth.</summary>
+    internal static CodexScan? CodexRecord(string file, Func<string, bool> inFolder, CodexScan scan, int line, JsonElement record)
+    {
+        string? type = Text(record, "type");
+        if (!scan.SeenMeta)
+        {
+            if (type != "session_meta") throw CostError.Data($"{file}:{line}: the first record is not session_meta");
+            if (!inFolder(RequiredText(record, file, line, "payload", "cwd"))) return null;
+        }
+        var (first, last) = WidenSpan(record, file, line, scan.First, scan.Last);
+        string? model = type == "turn_context" ? RequiredText(record, file, line, "payload", "model") : scan.Model;
+        scan = scan with { SeenMeta = true, First = first, Last = last, Model = model };
+        if (type != "event_msg" || Text(record, "payload", "type") != "token_count" || Member(record, "payload", "info") is null) return scan;
+        if (model == null) throw CostError.Data($"{file}:{line}: token_count before any turn_context model");
+        long tIn = RequiredNumber(record, file, line, "payload", "info", "total_token_usage", "input_tokens");
+        long tCached = Number(record, file, line, "payload", "info", "total_token_usage", "cached_input_tokens") ?? 0;
+        long tWrite = Number(record, file, line, "payload", "info", "total_token_usage", "cache_write_input_tokens") ?? 0;
+        long tOut = RequiredNumber(record, file, line, "payload", "info", "total_token_usage", "output_tokens");
+        long tReason = Number(record, file, line, "payload", "info", "total_token_usage", "reasoning_output_tokens") ?? 0;
+        Counters prev = scan.Prev;
+        if (CountersDown(prev, tIn, tCached, tWrite, tOut, tReason))
+            return scan with { Skips = [.. scan.Skips, $"{file}:{line}: the cumulative token counters went down"] };
+        // codex counts cached input inside input; ccusage and the table show the uncached part as Input.
+        scan.Models[model] = ModelAcc(scan.Models, model).Add((tIn - prev.Input) - (tCached - prev.Cached), tOut - prev.Output, tCached - prev.Cached, tWrite - prev.Write, tReason - prev.Reason);
+        return scan with { Prev = new Counters(tIn, tCached, tWrite, tOut, tReason) };
+    }
+
     /// <summary>The codex session of one rollout (its lines), or no rows when it is of another folder or empty; tokens are the
     /// growth of the cumulative counter between token_count events, charged to the model of the turn they fall in. Costs
-    /// are filled in by PlainPrice or ApplyCodexCost.</summary>
-    internal static List<Usage> CodexSession(string file, IEnumerable<string> lines, string folder, Func<string, bool> inFolder, DateTimeOffset now)
+    /// are filled in by PlainPrice or ApplyCodexCost. Also the records skipped (a token_count whose counters went down), as file:line and why.</summary>
+    internal static (List<Usage> Rows, List<string> Skipped) CodexSession(string file, IEnumerable<string> lines, string folder, Func<string, bool> inFolder, DateTimeOffset now)
     {
         string id = CodexRolloutId(file);
-        var models = new Dictionary<string, Acc>();
-        DateTimeOffset? first = null, last = null;
-        string? model = null;
-        long prevIn = 0, prevCached = 0, prevWrite = 0, prevOut = 0, prevReason = 0;
-        bool seenMeta = false;
+        var scan = new CodexScan(new Dictionary<string, Acc>(), null, null, null, new Counters(0, 0, 0, 0, 0), false, []);
         foreach (var (line, record) in JsonLines(file, lines))
         {
-            string? type = Text(record, "type");
-            if (!seenMeta)
-            {
-                if (type != "session_meta") throw new InvalidDataException($"{file}:{line}: the first record is not session_meta");
-                seenMeta = true;
-                if (!inFolder(RequiredText(record, file, line, "payload", "cwd"))) return new List<Usage>();
-            }
-            (first, last) = WidenSpan(record, file, line, first, last);
-            if (type == "turn_context") model = RequiredText(record, file, line, "payload", "model");
-            if (type != "event_msg" || Text(record, "payload", "type") != "token_count" || Member(record, "payload", "info") is null) continue;
-            if (model == null) throw new InvalidDataException($"{file}:{line}: token_count before any turn_context model");
-            long tIn = RequiredNumber(record, file, line, "payload", "info", "total_token_usage", "input_tokens");
-            long tCached = Number(record, file, line, "payload", "info", "total_token_usage", "cached_input_tokens") ?? 0;
-            long tWrite = Number(record, file, line, "payload", "info", "total_token_usage", "cache_write_input_tokens") ?? 0;
-            long tOut = RequiredNumber(record, file, line, "payload", "info", "total_token_usage", "output_tokens");
-            long tReason = Number(record, file, line, "payload", "info", "total_token_usage", "reasoning_output_tokens") ?? 0;
-            if (tIn < prevIn || tCached < prevCached || tWrite < prevWrite || tOut < prevOut || tReason < prevReason)
-                throw new InvalidDataException($"{file}:{line}: the cumulative token counters went down");
-            // codex counts cached input inside input; ccusage and the table show the uncached part as Input.
-            models[model] = ModelAcc(models, model).Add((tIn - prevIn) - (tCached - prevCached), tOut - prevOut, tCached - prevCached, tWrite - prevWrite, tReason - prevReason);
-            (prevIn, prevCached, prevWrite, prevOut, prevReason) = (tIn, tCached, tWrite, tOut, tReason);
+            if (CodexRecord(file, inFolder, scan, line, record) is not { } next) return (new List<Usage>(), new List<string>());
+            scan = next;
         }
         // A rollout with no record at all (codex made the file and never wrote to it) holds nothing to count or to misread; one with records still needs its meta and timestamps.
-        return seenMeta ? SessionRows("codex", id, folder, models, first, last, "ccusage", file, now) : new List<Usage>();
+        return (scan.SeenMeta ? SessionRows("codex", id, folder, scan.Models, scan.First, scan.Last, "ccusage", file, now) : new List<Usage>(), scan.Skips.ToList());
+    }
+
+    /// <summary>What a pi transcript has told so far: the models' totals (updated in place), the span and whether the session
+    /// header has been seen.</summary>
+    internal sealed record PiScan(Dictionary<string, Acc> Models, DateTimeOffset? First, DateTimeOffset? Last, bool SeenSession);
+
+    /// <summary>One record of a pi transcript: null when the transcript is of another folder, else the scan with the record's message.</summary>
+    internal static PiScan? PiRecord(string file, Func<string, bool> inFolder, PiScan scan, int line, JsonElement record)
+    {
+        if (!scan.SeenSession)
+        {
+            if (Text(record, "type") != "session") throw CostError.Data($"{file}:{line}: the first record is not the session header");
+            if (!inFolder(RequiredText(record, file, line, "cwd"))) return null;
+        }
+        var (first, last) = WidenSpan(record, file, line, scan.First, scan.Last);
+        scan = scan with { SeenSession = true, First = first, Last = last };
+        if (Text(record, "type") != "message" || Text(record, "message", "role") != "assistant") return scan;
+        if (Member(record, "message", "usage") is null) throw CostError.Data($"{file}:{line}: assistant message without usage");
+        string model = RequiredText(record, file, line, "message", "model");
+        Acc acc = ModelAcc(scan.Models, model).Add(RequiredNumber(record, file, line, "message", "usage", "input"), RequiredNumber(record, file, line, "message", "usage", "output"),
+            Number(record, file, line, "message", "usage", "cacheRead") ?? 0, Number(record, file, line, "message", "usage", "cacheWrite") ?? 0,
+            Number(record, file, line, "message", "usage", "reasoning"));
+        double cost = Member(record, "message", "usage", "cost", "total") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble()
+            : throw CostError.Data($"{file}:{line}: usage without cost.total");
+        scan.Models[model] = acc with { Cost = acc.Cost + cost };
+        return scan;
     }
 
     /// <summary>The pi session of one transcript (its lines), or no rows when it is of another folder; pi records the cost of
@@ -679,29 +877,13 @@ class RunJointCost
     {
         string name = Path.GetFileNameWithoutExtension(file);
         string id = name[(name.LastIndexOf('_') + 1)..];
-        var models = new Dictionary<string, Acc>();
-        DateTimeOffset? first = null, last = null;
-        bool seenSession = false;
+        var scan = new PiScan(new Dictionary<string, Acc>(), null, null, false);
         foreach (var (line, record) in JsonLines(file, lines))
         {
-            if (!seenSession)
-            {
-                if (Text(record, "type") != "session") throw new InvalidDataException($"{file}:{line}: the first record is not the session header");
-                seenSession = true;
-                if (!inFolder(RequiredText(record, file, line, "cwd"))) return new List<Usage>();
-            }
-            (first, last) = WidenSpan(record, file, line, first, last);
-            if (Text(record, "type") != "message" || Text(record, "message", "role") != "assistant") continue;
-            if (Member(record, "message", "usage") is null) throw new InvalidDataException($"{file}:{line}: assistant message without usage");
-            string model = RequiredText(record, file, line, "message", "model");
-            Acc acc = ModelAcc(models, model).Add(RequiredNumber(record, file, line, "message", "usage", "input"), RequiredNumber(record, file, line, "message", "usage", "output"),
-                Number(record, file, line, "message", "usage", "cacheRead") ?? 0, Number(record, file, line, "message", "usage", "cacheWrite") ?? 0,
-                Number(record, file, line, "message", "usage", "reasoning"));
-            double cost = Member(record, "message", "usage", "cost", "total") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble()
-                : throw new InvalidDataException($"{file}:{line}: usage without cost.total");
-            models[model] = acc with { Cost = acc.Cost + cost };
+            if (PiRecord(file, inFolder, scan, line, record) is not { } next) return new List<Usage>();
+            scan = next;
         }
-        return SessionRows("pi", id, folder, models, first, last, "pi-recorded", file, now).Select(r => AddListPrice(r)).ToList();
+        return SessionRows("pi", id, folder, scan.Models, scan.First, scan.Last, "pi-recorded", file, now).Select(r => AddListPrice(r)).ToList();
     }
 
     /// <summary>The store's usage records (its lines); every record is of the folder (<paramref name="inFolder"/>).</summary>
@@ -711,13 +893,13 @@ class RunJointCost
         foreach (var (line, r) in JsonLines(path, lines))
         {
             string recordFolder = RequiredText(r, path, line, "folder");
-            if (!inFolder(recordFolder)) throw new InvalidDataException($"{path}:{line}: record is for folder {recordFolder}, not {folder}");
+            if (!inFolder(recordFolder)) throw CostError.Data($"{path}:{line}: record is for folder {recordFolder}, not {folder}");
             string harness = RequiredText(r, path, line, "harness");
-            if (!Harnesses.Contains(harness)) throw new InvalidDataException($"{path}:{line}: unknown harness {harness}");
+            if (!Harnesses.Contains(harness)) throw CostError.Data($"{path}:{line}: unknown harness {harness}");
             result.Add(new Usage(harness, RequiredText(r, path, line, "sessionId"), RequiredText(r, path, line, "model"),
                 RequiredNumber(r, path, line, "input"), RequiredNumber(r, path, line, "output"), RequiredNumber(r, path, line, "cacheRead"),
                 RequiredNumber(r, path, line, "cacheWrite"), Number(r, path, line, "thinking"),
-                Member(r, "costUsd") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw new InvalidDataException($"{path}:{line}: missing number \"costUsd\""),
+                Member(r, "costUsd") is { ValueKind: JsonValueKind.Number } c ? c.GetDouble() : throw CostError.Data($"{path}:{line}: missing number \"costUsd\""),
                 RequiredText(r, path, line, "costSource"), Time(RequiredText(r, path, line, "first"), path, line),
                 Time(RequiredText(r, path, line, "last"), path, line), recordFolder, Time(RequiredText(r, path, line, "snapshotUtc"), path, line)));
         }
@@ -731,7 +913,7 @@ class RunJointCost
         foreach (var (line, r) in JsonLines(path, lines))
         {
             string kind = RequiredText(r, path, line, "kind");
-            if (kind != "Launcher" && kind != "Session") throw new InvalidDataException($"{path}:{line}: kind must be Launcher or Session, not {kind}");
+            if (kind != "Launcher" && kind != "Session" && kind != "Editor") throw CostError.Data($"{path}:{line}: kind must be Launcher, Session or Editor, not {kind}");
             result.Add(new LaunchEntry(Time(RequiredText(r, path, line, "startUtc"), path, line), kind, RequiredText(r, path, line, "tool"),
                 RequiredText(r, path, line, "harness"), RequiredText(r, path, line, "folder"), Text(r, "skill"), Text(r, "group") ?? DefaultGroup));
         }
@@ -783,17 +965,21 @@ class RunJointCost
             .ToDictionary(k => k, k => launched.TryGetValue(k, out LaunchEntry? l) ? l.Group : DefaultGroup);
     }
 
-    internal static string RenderGroups(List<Row> rows, List<LaunchEntry> launches)
+    /// <summary>The note a report ends with when transcript records were skipped; nothing when none were.</summary>
+    internal static string SkippedNote(int skipped) =>
+        skipped == 0 ? "" : $"\n{skipped} transcript records were skipped (a codex token_count whose cumulative counters went down); their tokens are not counted. The records are listed on stderr.\n";
+
+    internal static string RenderGroups(List<Row> rows, List<LaunchEntry> launches, int skipped = 0)
     {
         var of = SessionGroups(rows, launches);
         var sb = new StringBuilder();
         sb.Append("| Group | Sessions | Approx cost (USD) |\n|---|---:|---:|\n");
         foreach (var g in GroupTotals(rows, of))
             sb.Append($"| {g.Name} | {g.Sessions} | {Fixed4(g.Cost)} |\n");
-        return sb.ToString();
+        return sb.Append(SkippedNote(skipped)).ToString();
     }
 
-    internal static string RenderGroupsJson(List<Row> rows, List<LaunchEntry> launches)
+    internal static string RenderGroupsJson(List<Row> rows, List<LaunchEntry> launches, int skipped = 0)
     {
         var of = SessionGroups(rows, launches);
         using var stream = new MemoryStream();
@@ -810,12 +996,13 @@ class RunJointCost
                 w.WriteEndObject();
             }
             w.WriteEndArray();
+            if (skipped > 0) w.WriteNumber("skippedRecords", skipped);
             w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(stream.ToArray()) + "\n";
     }
 
-    internal static string RenderTable(List<Row> rows, List<LaunchEntry> launches)
+    internal static string RenderTable(List<Row> rows, List<LaunchEntry> launches, int skipped = 0)
     {
         var launched = MatchLaunches(rows, launches);
         var groups = SessionGroups(rows, launches);
@@ -838,10 +1025,10 @@ class RunJointCost
         var defaulted = all.Where(u => u.CostSource.Contains("+default:")).Select(u => $"{u.Harness} {u.Model} (priced as {u.CostSource[(u.CostSource.IndexOf("+default:", StringComparison.Ordinal) + 9)..]})").Distinct().Order(StringComparer.Ordinal).ToList();
         if (defaulted.Count > 0)
             sb.Append($"\n{defaulted.Count} kinds of rows use a default price, so their cost may not be accurate: {string.Join(", ", defaulted)}.\n");
-        return sb.ToString();
+        return sb.Append(SkippedNote(skipped)).ToString();
     }
 
-    internal static string RenderJson(List<Row> rows, List<LaunchEntry> launches)
+    internal static string RenderJson(List<Row> rows, List<LaunchEntry> launches, int skipped = 0)
     {
         var launched = MatchLaunches(rows, launches);
         var groups = SessionGroups(rows, launches);
@@ -890,15 +1077,16 @@ class RunJointCost
                 w.WriteNumber("costUsd", c.Cost);
                 w.WriteEndObject();
             }
+            if (skipped > 0) w.WriteNumber("skippedRecords", skipped);
             w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(stream.ToArray()) + "\n";
     }
 
     /// <summary>What a run prints: the groups (--groups) or the rows, as JSON (--json) or a table.</summary>
-    internal static string RenderReport(bool groups, bool json, List<Row> rows, List<LaunchEntry> launches) =>
-        groups ? (json ? RenderGroupsJson(rows, launches) : RenderGroups(rows, launches))
-            : json ? RenderJson(rows, launches) : RenderTable(rows, launches);
+    internal static string RenderReport(bool groups, bool json, List<Row> rows, List<LaunchEntry> launches, int skipped = 0) =>
+        groups ? (json ? RenderGroupsJson(rows, launches, skipped) : RenderGroups(rows, launches, skipped))
+            : json ? RenderJson(rows, launches, skipped) : RenderTable(rows, launches, skipped);
 
     /// <summary>Merges the live rows into the stored ones. Unless ccusage priced them (<paramref name="updateCost"/>), a live row
     /// whose tokens did not change since the store keeps the store's cost.</summary>
@@ -907,20 +1095,18 @@ class RunJointCost
 
     // ---- the effects: files, ccusage, the lock, the console -----------------------------------------------------------
 
-    /// <summary>The test "this record's folder is <paramref name="folder"/>": both sides normalized (NormalizeFolder), so a
-    /// transcript's path spelled with the other separator, or with a trailing one, still launched.</summary>
+    /// <summary>The test "this record's folder is <paramref name="folder"/> or under it": both sides normalized (NormalizeFolder), so a
+    /// transcript's path spelled with the other separator, or with a trailing one, still launched (UnderFolder).</summary>
     private static Func<string, bool> InFolder(string folder)
     {
         string wanted = NormalizeFolder(folder);
-        return cwd => SameFolder(NormalizeFolder(cwd), wanted);
+        return cwd => UnderFolder(NormalizeFolder(cwd), wanted);
     }
 
-    /// <summary>Takes the lock file (the pid inside). A lock whose pid is not alive is stale and replaced; a live one is
-    /// left alone and its pid returned.</summary>
-    internal static (bool Acquired, int OwnerPid) AcquireLock(string path, int pid)
+    /// <summary>One attempt per unit of fuel to take the lock file.</summary>
+    internal static (bool Acquired, int OwnerPid) AcquireLockWith(string path, int pid, int fuel)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        for (int attempt = 0; attempt < 2; attempt++)
+        for (; fuel > 0; fuel--)
         {
             try
             {
@@ -932,12 +1118,20 @@ class RunJointCost
             {
                 string text = File.ReadAllText(path).Trim();
                 if (!int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int owner))
-                    throw new InvalidDataException($"{path}: the lock does not hold a pid (\"{text}\")");
+                    throw CostError.Data($"{path}: the lock does not hold a pid (\"{text}\")");
                 if (PidAlive(owner)) return (false, owner);
                 File.Delete(path);
             }
         }
-        throw new IOException($"{path}: the stale lock could not be replaced");
+        throw CostError.Io($"{path}: the stale lock could not be replaced");
+    }
+
+    /// <summary>Takes the lock file (the pid inside). A lock whose pid is not alive is stale and replaced; a live one is
+    /// left alone and its pid returned.</summary>
+    internal static (bool Acquired, int OwnerPid) AcquireLock(string path, int pid)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        return AcquireLockWith(path, pid, 2);
     }
 
     /// <summary>The newest write time of the transcripts of the rows' sessions (and of the folder's Claude and pi files).</summary>
@@ -959,6 +1153,16 @@ class RunJointCost
             if (newest == null || t > newest) newest = t;
         }
         return newest;
+    }
+
+    /// <summary>Sleeps a quarter of a second at a time, as many times as the fuel, and not once more after a cancellation.</summary>
+    internal static void WaitFor(Func<bool> isCancelled, int fuel)
+    {
+        for (; fuel > 0; fuel--)
+        {
+            if (isCancelled()) return;
+            Thread.Sleep(250);
+        }
     }
 
     /// <summary>The watcher: one per folder and harness (lock file), snapshots every interval, ends (exit 0) once nothing
@@ -995,14 +1199,14 @@ class RunJointCost
                     File.AppendAllText(log, LogLine(DateTimeOffset.UtcNow, $"watch {harness} ended: idle"));
                     break;
                 }
-                cancel.WaitHandle.WaitOne(interval);
+                WaitFor(() => cancel.IsCancellationRequested, (int)((interval.Ticks / 10000 + 249) / 250));
             }
             return 0;
         }
         catch (Exception e)
         {
             File.AppendAllText(log, LogLine(DateTimeOffset.UtcNow, $"ERROR {harness}: {e.GetType().Name}: {e.Message.ReplaceLineEndings(" ")}"));
-            Console.Error.WriteLine("runJointCost: " + e.Message);
+            Console.Error.WriteLine("runJointCostAST: " + e.Message);
             return 1;
         }
         finally
@@ -1032,7 +1236,7 @@ class RunJointCost
         }
         catch (System.ComponentModel.Win32Exception e)
         {
-            throw new InvalidOperationException($"cannot run bunx, which is on the PATH: {e.Message}");
+            throw CostError.Operation($"cannot run bunx, which is on the PATH: {e.Message}");
         }
     }
 
@@ -1053,58 +1257,66 @@ class RunJointCost
         return CcusageJson(tool, RunProcess(start, $"ccusage {tool} session"));
     }
 
+    /// <summary>The rows of the transcripts, in file-name order: each file is read whole and turned into its session's rows.</summary>
+    internal static List<Usage> ReadSessions(IEnumerable<string> files, Func<string, IEnumerable<string>, List<Usage>> session) =>
+        files.SelectMany(file => session(file, ReadLines(file))).ToList();
+
     internal static List<Usage> ReadClaude(string projectsRoot, string folder, DateTimeOffset now)
     {
-        var result = new List<Usage>();
         string dir = ClaudeDir(projectsRoot, folder);
-        if (!Directory.Exists(dir)) return result;
+        if (!Directory.Exists(dir)) return new List<Usage>();
         Func<string, bool> inFolder = InFolder(folder);
-        foreach (string file in Directory.GetFiles(dir, "*.jsonl").OrderBy(f => f, StringComparer.Ordinal))
-            result.AddRange(ClaudeSession(file, ReadLines(file), folder, inFolder, now));
-        return result;
+        return ReadSessions(Directory.GetFiles(dir, "*.jsonl").OrderBy(f => f, StringComparer.Ordinal), (file, lines) => ClaudeSession(file, lines, folder, inFolder, now));
     }
 
-    internal static List<Usage> ReadCodex(string sessionsRoot, string folder, DateTimeOffset now)
+    internal static (List<Usage> Rows, List<string> Skipped) ReadCodex(string sessionsRoot, string folder, DateTimeOffset now)
     {
         var result = new List<Usage>();
-        if (!Directory.Exists(sessionsRoot)) return result;
+        var skipped = new List<string>();
+        if (!Directory.Exists(sessionsRoot)) return (result, skipped);
         Func<string, bool> inFolder = InFolder(folder);
         foreach (string file in Directory.EnumerateFiles(sessionsRoot, "rollout-*.jsonl", SearchOption.AllDirectories).OrderBy(f => f, StringComparer.Ordinal))
         {
-            if (!CodexInFolder(file, ReadLines(file), inFolder)) continue;
-            result.AddRange(CodexSession(file, ReadLines(file), folder, inFolder, now));
+            if (!CodexInFolder(file, ReadHeadLines(file), inFolder)) continue;
+            var (rows, skips) = CodexSession(file, ReadLines(file), folder, inFolder, now);
+            result.AddRange(rows);
+            skipped.AddRange(skips);
         }
-        return result;
+        return (result, skipped);
     }
 
     internal static List<Usage> ReadPi(string sessionsRoot, string folder, DateTimeOffset now)
     {
-        var result = new List<Usage>();
         string dir = PiDir(sessionsRoot, folder);
-        if (!Directory.Exists(dir)) return result;
+        if (!Directory.Exists(dir)) return new List<Usage>();
         Func<string, bool> inFolder = InFolder(folder);
-        foreach (string file in Directory.GetFiles(dir, "*.jsonl").OrderBy(f => f, StringComparer.Ordinal))
-            result.AddRange(PiSession(file, ReadLines(file), folder, inFolder, now));
-        return result;
+        return ReadSessions(Directory.GetFiles(dir, "*.jsonl").OrderBy(f => f, StringComparer.Ordinal), (file, lines) => PiSession(file, lines, folder, inFolder, now));
+    }
+
+    /// <summary>The rows of one harness, priced: from their tokens with the built-in table, or with the pinned ccusage's numbers
+    /// (<paramref name="updateCost"/>); none when there are none.</summary>
+    internal static List<Usage> PriceLive(List<Usage> rows, bool updateCost, string tool, Func<List<Usage>, string, List<Usage>> applyCost)
+    {
+        if (rows.Count == 0) return new List<Usage>();
+        return updateCost ? applyCost(rows, Ccusage(tool)) : rows.Select(r => PlainPrice(r)).ToList();
     }
 
     /// <summary>The live rows of the harnesses' transcripts, priced: Claude and codex from their tokens with the built-in table
     /// (<see cref="ListPrices"/>), or with the pinned ccusage's numbers (<paramref name="updateCost"/>); pi's own cost.</summary>
-    private static List<Usage> ReadLive(string folder, List<string> harnesses, string home, DateTimeOffset now, bool updateCost)
+    private static (List<Usage> Rows, List<string> Skipped) ReadLive(string folder, List<string> harnesses, string home, DateTimeOffset now, bool updateCost)
     {
         var live = new List<Usage>();
+        var skipped = new List<string>();
         if (harnesses.Contains("claude"))
-        {
-            var rows = ReadClaude(Path.Combine(home, ".claude", "projects"), folder, now);
-            if (rows.Count > 0) live.AddRange(updateCost ? ApplyClaudeCost(rows, Ccusage("claude")) : rows.Select(r => PlainPrice(r)));
-        }
+            live.AddRange(PriceLive(ReadClaude(Path.Combine(home, ".claude", "projects"), folder, now), updateCost, "claude", ApplyClaudeCost));
         if (harnesses.Contains("codex"))
         {
-            var rows = ReadCodex(Path.Combine(home, ".codex", "sessions"), folder, now);
-            if (rows.Count > 0) live.AddRange(updateCost ? ApplyCodexCost(rows, Ccusage("codex")) : rows.Select(r => PlainPrice(r)));
+            var (codex, skips) = ReadCodex(Path.Combine(home, ".codex", "sessions"), folder, now);
+            live.AddRange(PriceLive(codex, updateCost, "codex", ApplyCodexCost));
+            skipped.AddRange(skips);
         }
         if (harnesses.Contains("pi")) live.AddRange(ReadPi(Path.Combine(home, ".pi", "agent", "sessions"), folder, now));
-        return live;
+        return (live, skipped);
     }
 
     internal static List<Usage> ReadStore(string path, string folder) =>
@@ -1131,33 +1343,59 @@ class RunJointCost
     }
 
     /// <summary>Reads the live transcripts of the harnesses, merges them into the folder's usage.jsonl and (unless read-only)
-    /// writes it back. Returns every merged row, of all harnesses.</summary>
-    internal static List<Row> CollectAndMerge(string folder, List<string> harnesses, string home, bool snapshot, DateTimeOffset now, bool updateCost = false)
+    /// writes it back. Returns every merged row, of all harnesses, and the transcript records skipped (file:line and why).</summary>
+    internal static (List<Row> Rows, List<string> Skipped) CollectAndMerge(string folder, List<string> harnesses, string home, bool snapshot, DateTimeOffset now, bool updateCost = false)
     {
-        List<Usage> live = ReadLive(folder, harnesses, home, now, updateCost);
+        var (live, skipped) = ReadLive(folder, harnesses, home, now, updateCost);
         string usage = Path.Combine(folder, StoreFolder, UsageFile);
         List<Row> merged = MergeLive(live, ReadStore(usage, folder), updateCost);
         if (snapshot && merged.Count > 0) WriteStore(usage, merged.Select(r => r.Usage).ToList());
-        return merged;
+        return (merged, skipped);
+    }
+
+    /// <summary>The skipped records on stderr, one line each (file:line and why).</summary>
+    private static void ReportSkipped(List<string> skipped)
+    {
+        foreach (string s in skipped) Console.Error.WriteLine("runJointCostAST: skipped " + s);
+    }
+
+    /// <summary>What a run does once its command line is read: watch one harness, or print the report of the folder's usage.</summary>
+    internal abstract record Command;
+
+    internal sealed record WatchCommand(string Harness, TimeSpan Interval, TimeSpan Idle) : Command;
+
+    internal sealed record ReportCommand(CostArgs A) : Command;
+
+    /// <summary>Minutes as ticks of 100 ns.</summary>
+    internal static long Ticks(double minutes) => (long)Math.Round(minutes * 600000000.0, MidpointRounding.AwayFromZero);
+
+    /// <summary>The command a command line asks for; the refusal when its options are not legal together.</summary>
+    internal static Command Decide(CostArgs a)
+    {
+        CheckWatch(a);
+        return a.Watch && a.Harnesses.Count == 1
+            ? new WatchCommand(a.Harnesses[0], new TimeSpan(Ticks(a.IntervalMinutes)), new TimeSpan(Ticks(a.IdleMinutes)))
+            : new ReportCommand(a);
     }
 
     private static int Run(string[] args, TextWriter output)
     {
         CostArgs a = ParseArgs(args, Directory.GetCurrentDirectory());
         string folder = NormalizeFolder(a.Folder);
-        CheckWatch(a);
         string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (a.Watch)
+        if (Decide(a) is WatchCommand w)
         {
             using var cancel = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
             using var term = PosixSignalRegistration.Create(PosixSignal.SIGTERM, c => { c.Cancel = true; cancel.Cancel(); });
-            return Watch(folder, a.Harnesses[0], TimeSpan.FromMinutes(a.IntervalMinutes), TimeSpan.FromMinutes(a.IdleMinutes),
-                () => CollectAndMerge(folder, a.Harnesses, home, true, DateTimeOffset.UtcNow), rows => LatestChange(home, folder, a.Harnesses[0], rows), cancel.Token);
+            return Watch(folder, w.Harness, w.Interval, w.Idle,
+                () => { var (rows, skipped) = CollectAndMerge(folder, a.Harnesses, home, true, DateTimeOffset.UtcNow); ReportSkipped(skipped); return rows; }, rows => LatestChange(home, folder, w.Harness, rows), cancel.Token);
         }
-        var merged = CollectAndMerge(folder, a.Harnesses, home, a.Snapshot, DateTimeOffset.UtcNow, a.UpdateCost).Where(r => a.Harnesses.Contains(r.Usage.Harness)).ToList();
+        var (collected, skipped) = CollectAndMerge(folder, a.Harnesses, home, a.Snapshot, DateTimeOffset.UtcNow, a.UpdateCost);
+        var merged = collected.Where(r => a.Harnesses.Contains(r.Usage.Harness)).ToList();
         var launches = ReadLaunches(Path.Combine(folder, StoreFolder, LaunchesFile));
-        output.Write(RenderReport(a.Groups, a.Json, merged, launches));
+        ReportSkipped(skipped);
+        output.Write(RenderReport(a.Groups, a.Json, merged, launches, skipped.Count));
         return 0;
     }
 
@@ -1170,7 +1408,7 @@ class RunJointCost
         }
         catch (Exception e) when (e is InvalidDataException or IOException or InvalidOperationException or ArgumentException)
         {
-            Console.Error.WriteLine("runJointCost: " + e.Message);
+            Console.Error.WriteLine("runJointCostAST: " + e.Message);
             return 1;
         }
     }

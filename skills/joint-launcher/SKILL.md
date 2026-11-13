@@ -14,8 +14,9 @@ then do it.
 
 ## 1. Ask
 
-Read `runJointLauncher.json` in this folder (it may not exist yet: then no skills are configured). Its `Skills` object
-maps each configured skill's name to its SKILL.md path (relative to this folder unless absolute). A skill is available
+Read `runJointLauncher.json` in the working directory, the folder this harness was started in (not this skill's own
+folder under the harness's skills folder; it may not exist yet: then no skills are configured). Its `Skills` object
+maps each configured skill's name to its SKILL.md path (relative to that working directory unless absolute). A skill is available
 only while that file exists: check each one, do not assume.
 
 Ask the user to choose (with your question tool if you have one, else as a numbered list): one option per available
