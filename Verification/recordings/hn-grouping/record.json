@@ -1,0 +1,37 @@
+{
+  "name": "hn-grouping",
+  "fps": 6,
+  "seconds": 28.3,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "ask",
+      "t": 0
+    },
+    {
+      "name": "grouped",
+      "t": 16.821
+    },
+    {
+      "name": "shown",
+      "t": 28.31
+    },
+    {
+      "name": "end",
+      "t": 28.31
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-04-classify",
+      "bytes": 318735
+    },
+    {
+      "name": "hn-04-groups",
+      "bytes": 1428469
+    }
+  ]
+}

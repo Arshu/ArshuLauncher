@@ -1,0 +1,29 @@
+{
+  "name": "hn-dock",
+  "fps": 6,
+  "seconds": 10,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "04_dock_start",
+      "t": 0
+    },
+    {
+      "name": "04_dock_end",
+      "t": 10.023
+    },
+    {
+      "name": "end",
+      "t": 10.024
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-02-dock",
+      "bytes": 229903
+    }
+  ]
+}

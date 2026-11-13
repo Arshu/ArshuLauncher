@@ -1,0 +1,29 @@
+{
+  "name": "hn-bookmarks",
+  "fps": 6,
+  "seconds": 13.1,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "09_bookmarks_start",
+      "t": 0
+    },
+    {
+      "name": "09_bookmarks_end",
+      "t": 13.141
+    },
+    {
+      "name": "end",
+      "t": 13.141
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-09-bookmarks",
+      "bytes": 419491
+    }
+  ]
+}

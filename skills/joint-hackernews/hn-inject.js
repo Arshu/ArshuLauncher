@@ -26,6 +26,7 @@
   };
   const get = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o);
   // a failing bridge means the daemon is gone: say so on the dock tab instead of failing silently (edits would not be saved)
+  const USER = 'a.hnuser, a[href^="user?id="]'; // HN dropped the hnuser class: every user link is a[href^="user?id="]
   const bridgeDown = (e) => { const t = document.getElementById('hn-tab'); if (t) { t.textContent = 'HN ⚠ daemon off'; t.title = 'the joint-hackernews daemon is not running, so changes are not saved: node hn.mjs start'; } throw e; };
   // a call to a dead daemon never settles, so it also times out (20 s covers the slowest real call, the karma lookup)
   const bridge = (m) => Promise.race([window.__hnBridge ? window.__hnBridge(m) : Promise.reject(new Error('no bridge')),
@@ -121,7 +122,7 @@
       const cm = $$('a', sub || r).filter((x) => /comment|discuss/.test(x.textContent)).pop();
       return {
         id: r.id, row: r, sub, spacer, title: a?.textContent || '', url: a?.href || '', domain: $('.sitestr', r)?.textContent || '',
-        user: $('.hnuser', sub || r)?.textContent || '', score: parseInt($('.score', sub || r)?.textContent) || 0,
+        user: $(USER, sub || r)?.textContent || '', score: parseInt($('.score', sub || r)?.textContent) || 0,
         t: ageEl ? Date.parse((ageEl.title || '').split(' ')[0] + 'Z') : NaN,
         comments: cm ? parseInt(cm.textContent) || 0 : 0,
       };
@@ -162,9 +163,9 @@
       const s = pageType() === 'list' ? (window.__hnStories || []).find((x) => x.id === id) : null;
       if (s) return { title: s.title, url: s.url, domain: s.domain, user: s.user, points: s.score, comments: s.comments, postedAt: isNaN(s.t) ? '' : new Date(s.t).toISOString(), group: s.group };
       const fat = $('.fatitem'), a = $('.titleline > a', fat), age = ($('.age', fat)?.title || '').split(' ')[0];
-      return { title: a?.textContent || '', url: a?.href || '', domain: $('.sitestr', fat)?.textContent || '', user: $('.hnuser', fat)?.textContent || '', points: parseInt($('.score', fat)?.textContent) || 0, comments: $$('tr.comtr').length, postedAt: age ? age + 'Z' : '', group: itemGroupName() };
+      return { title: a?.textContent || '', url: a?.href || '', domain: $('.sitestr', fat)?.textContent || '', user: $(USER, fat)?.textContent || '', points: parseInt($('.score', fat)?.textContent) || 0, comments: $$('tr.comtr').length, postedAt: age ? age + 'Z' : '', group: itemGroupName() };
     }
-    const r = document.getElementById(id), text = ($('.commtext', r)?.innerText || '').replace(/\s+/g, ' ').trim(), user = $('.hnuser', r)?.textContent || '';
+    const r = document.getElementById(id), text = ($('.commtext', r)?.innerText || '').replace(/\s+/g, ' ').trim(), user = $(USER, r)?.textContent || '';
     return { title: user + ': ' + text.slice(0, 120), url: location.origin + '/item?id=' + id, domain: '', user, points: 0, comments: 0, postedAt: (($('.age', r)?.title || '').split(' ')[0] || '') + 'Z', group: itemGroupName() };
   }
   function bookmarksBlock() {
@@ -353,7 +354,7 @@
     const root = document.documentElement;
     root.classList.toggle('hn-guides', !!o.indentGuides);
     const rows = $$('tr.comtr');
-    const op = $('.fatitem .hnuser')?.textContent;
+    const op = $('.fatitem '+USER)?.textContent;
     const level = Number(o.labels) || 0;
     const ann = S.annotations.comments;
     const words = (t) => new Set((t.toLowerCase().match(/[a-z]{4,}/g) || []));
@@ -368,7 +369,7 @@
     for (const r of rows) {
       r.dataset.hnId = r.id;
       const ch = $('.comhead', r); if (ch) ch.append(starEl('comment', r.id));
-      const user = $('.hnuser', r)?.textContent;
+      const user = $(USER, r)?.textContent;
       const text = $('.commtext', r)?.innerText || '';
       if (o.highlightOp && op && user === op) r.classList.add('hn-op');
       let label = null, reason = '';
@@ -407,12 +408,12 @@
       const ul = el('ul');
       for (const p of sum.positions || []) {
         const li = el('li', {}, el('b', { text: p.title + ': ' }), p.text + ' ');
-        for (const id of p.ids || []) li.append(el('a', { class: 'hn-goto', 'data-id': id, text: '[' + (($('.hnuser', document.getElementById(id) || document.body)?.textContent) || id) + '] ' }));
+        for (const id of p.ids || []) li.append(el('a', { class: 'hn-goto', 'data-id': id, text: '[' + (($(USER, document.getElementById(id) || document.body)?.textContent) || id) + '] ' }));
         ul.append(li);
       }
       box.append(ul);
       if (sum.disagreement) box.append(el('div', {}, el('b', { text: 'Where they disagree: ' }), sum.disagreement));
-      if ((sum.best || []).length) { const d = el('div', {}, el('b', { text: 'Worth reading: ' })); for (const id of sum.best) d.append(el('a', { class: 'hn-goto', 'data-id': id, text: ($('.hnuser', document.getElementById(id) || document.body)?.textContent || id) + ' ' })); box.append(d); }
+      if ((sum.best || []).length) { const d = el('div', {}, el('b', { text: 'Worth reading: ' })); for (const id of sum.best) d.append(el('a', { class: 'hn-goto', 'data-id': id, text: ($(USER, document.getElementById(id) || document.body)?.textContent || id) + ' ' })); box.append(d); }
       box.append(el('div', { class: 'm', text: 'Written by Claude from ' + sum.covered + ' of ' + sum.total + ' comments at ' + (sum.ts || '') + '. It can be wrong: check the comments it cites.' }));
       const tree = $('table.comment-tree') || $('tr.comtr')?.closest('table');
       if (tree) tree.parentNode.insertBefore(box, tree);
@@ -585,7 +586,7 @@
     }
   }, true);
   document.addEventListener('mouseover', async (e) => {
-    const a = e.target.closest?.('a.hnuser');
+    const a = e.target.closest?.('a.hnuser, a[href^="user?id="]');
     if (!a || !S?.options?.discussion?.authorCard || a.dataset.hnCard) return;
     a.dataset.hnCard = '1';
     const u = a.textContent;
@@ -608,9 +609,9 @@
       const rows = (L.maxDepth > 0 ? all.filter((r) => depthOf(r) < L.maxDepth) : all).slice(0, cap);
       return {
         type, url: location.href, id: new URLSearchParams(location.search).get('id'),
-        title: $('.fatitem .titleline')?.innerText || '', op: $('.fatitem .hnuser')?.textContent || '', body: ($('.fatitem .toptext')?.innerText || '').slice(0, chars * 4),
+        title: $('.fatitem .titleline')?.innerText || '', op: $('.fatitem '+USER)?.textContent || '', body: ($('.fatitem .toptext')?.innerText || '').slice(0, chars * 4),
         total: all.length, included: rows.length, truncated: rows.length < all.length, limits: { maxDepth: L.maxDepth || 0, maxComments: cap, commentChars: chars },
-        comments: rows.map((r) => ({ id: r.id, depth: depthOf(r), user: $('.hnuser', r)?.textContent || '', text: ($('.commtext', r)?.innerText || '').slice(0, chars) })),
+        comments: rows.map((r) => ({ id: r.id, depth: depthOf(r), user: $(USER, r)?.textContent || '', text: ($('.commtext', r)?.innerText || '').slice(0, chars) })),
       };
     }
     return { type, url: location.href };

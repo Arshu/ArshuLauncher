@@ -1,0 +1,29 @@
+{
+  "name": "hn-labels",
+  "fps": 6,
+  "seconds": 13.6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "08_labels_start",
+      "t": 0
+    },
+    {
+      "name": "08_labels_end",
+      "t": 13.582
+    },
+    {
+      "name": "end",
+      "t": 13.582
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-08-labels",
+      "bytes": 1764253
+    }
+  ]
+}

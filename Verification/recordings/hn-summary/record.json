@@ -1,0 +1,29 @@
+{
+  "name": "hn-summary",
+  "fps": 6,
+  "seconds": 30.9,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "07_summary_start",
+      "t": 0
+    },
+    {
+      "name": "07_summary_end",
+      "t": 30.921
+    },
+    {
+      "name": "end",
+      "t": 30.921
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-07-summary",
+      "bytes": 1668840
+    }
+  ]
+}

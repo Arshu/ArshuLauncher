@@ -1,0 +1,37 @@
+{
+  "name": "launcher-no-skill",
+  "fps": 6,
+  "seconds": 17.6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "ns_launch",
+      "t": 2.546
+    },
+    {
+      "name": "ns_choices",
+      "t": 12.601
+    },
+    {
+      "name": "ns_end",
+      "t": 17.606
+    },
+    {
+      "name": "end",
+      "t": 17.606
+    }
+  ],
+  "gifs": [
+    {
+      "name": "launcher-01-opens",
+      "bytes": 196232
+    },
+    {
+      "name": "launcher-01-choices",
+      "bytes": 66019
+    }
+  ]
+}

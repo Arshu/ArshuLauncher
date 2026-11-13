@@ -1,0 +1,29 @@
+{
+  "name": "hn-thread",
+  "fps": 6,
+  "seconds": 24.4,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "06_thread_start",
+      "t": 0
+    },
+    {
+      "name": "06_thread_end",
+      "t": 24.356
+    },
+    {
+      "name": "end",
+      "t": 24.356
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-06-thread",
+      "bytes": 3462893
+    }
+  ]
+}

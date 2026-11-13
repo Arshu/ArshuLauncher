@@ -1,0 +1,45 @@
+{
+  "name": "hn-launch",
+  "fps": 6,
+  "seconds": 34,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "launch",
+      "t": 2.564
+    },
+    {
+      "name": "picker",
+      "t": 23.256
+    },
+    {
+      "name": "submitted",
+      "t": 28.605
+    },
+    {
+      "name": "opened",
+      "t": 34.018
+    },
+    {
+      "name": "end",
+      "t": 34.018
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-01-launch",
+      "bytes": 394859
+    },
+    {
+      "name": "hn-01-persona",
+      "bytes": 100800
+    },
+    {
+      "name": "hn-01-opens",
+      "bytes": 298143
+    }
+  ]
+}

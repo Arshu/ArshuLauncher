@@ -1,0 +1,29 @@
+{
+  "name": "hn-joining",
+  "fps": 6,
+  "seconds": 7.6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "02_joining_start",
+      "t": 0
+    },
+    {
+      "name": "02_joining_end",
+      "t": 7.627
+    },
+    {
+      "name": "end",
+      "t": 7.627
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-10-joining",
+      "bytes": 148101
+    }
+  ]
+}

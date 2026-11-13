@@ -1,0 +1,37 @@
+{
+  "name": "hn-article",
+  "fps": 6,
+  "seconds": 26.6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "05_article_start",
+      "t": 0
+    },
+    {
+      "name": "05_article_queued",
+      "t": 4.025
+    },
+    {
+      "name": "05_article_handled",
+      "t": 22.584
+    },
+    {
+      "name": "05_article_end",
+      "t": 26.593
+    },
+    {
+      "name": "end",
+      "t": 26.593
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-05-article",
+      "bytes": 583973
+    }
+  ]
+}

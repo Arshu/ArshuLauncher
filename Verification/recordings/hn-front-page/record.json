@@ -1,0 +1,29 @@
+{
+  "name": "hn-front-page",
+  "fps": 6,
+  "seconds": 29.6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "front",
+      "t": 0
+    },
+    {
+      "name": "scrolled",
+      "t": 29.646
+    },
+    {
+      "name": "end",
+      "t": 29.646
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-03-signals",
+      "bytes": 2527307
+    }
+  ]
+}

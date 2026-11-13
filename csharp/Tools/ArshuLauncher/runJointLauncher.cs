@@ -12,6 +12,229 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Linq;
+using static SkillCoreAST;
+using static HostLayoutAST;
+
+/// <summary>
+/// ArshuCore.CostReader, the csharp side of lean4/ArshuCore/ArshuCore/CostReader.lean: where the tools look for the cost reader
+/// (runJointCostAST.cs) and how they start its watcher, byte for byte with the lean4 defs. A core file is plain code for
+/// `#:include ../ArshuCore/CostReaderAST.cs`: constants and pure static members, no Main, no top-level statements. Finding the file
+/// (FindCostReader) and starting the process stay in each tool: they are effects.
+/// </summary>
+static class CostReaderAST
+{
+    public const string CostReaderName = "runJointCostAST.cs";
+
+    public const string CostReaderMissing = "runJointCostAST.cs not found beside this tool: this session's cost is not captured";
+
+    /// <summary>Where the cost reader is looked for, in order: beside the tool, else in ../ArshuCost.</summary>
+    public static List<string> CostReaderCandidates(string tool) =>
+        new() { Path.Combine(tool, CostReaderName), Path.Combine(tool, "..", "ArshuCost", CostReaderName) };
+
+    /// <summary>The arguments of the cost reader's watcher on the workspace folder for the harness.</summary>
+    public static List<string> CostWatchArgs(string reader, string workspaceDir, string harness) =>
+        new() { "run", reader, "--", "--watch", "--folder", workspaceDir, "--harness", harness };
+}
+
+/// <summary>
+/// ArshuCore.Text, the csharp side of lean4/ArshuCore/ArshuCore/Text.lean: text is read by ASCII rules only, the same in every
+/// language: whitespace is space, tab, CR and LF; letters are A-Z. A core file is plain code for
+/// `#:include ../ArshuCore/TextAST.cs` (trim and lower; the number readers are in TextNumberAST.cs and TextLongAST.cs, so a tool compiles only what it uses): pure static members, no Main, no top-level statements.
+/// </summary>
+static partial class TextAST
+{
+    /// <summary>The text without space, tab, CR and LF at both ends.</summary>
+    public static string AsciiTrim(string source) => source.Trim(' ', '\t', '\r', '\n');
+
+    /// <summary>The character with A-Z folded to a-z and every other character unchanged.</summary>
+    public static char AsciiLowerChar(char c) => c is >= 'A' and <= 'Z' ? (char)(c + ('a' - 'A')) : c;
+
+    /// <summary>The text with A-Z folded to a-z, character by character.</summary>
+    public static string AsciiLower(string source)
+    {
+        var lower = new StringBuilder(source.Length);
+        foreach (char c in source) lower.Append(AsciiLowerChar(c));
+        return lower.ToString();
+    }
+}
+
+/// <summary>
+/// ArshuCore.SkillCore, the csharp side of lean4/ArshuCore/ArshuCore/SkillCore.lean: the pure skill rules the Launcher, Session and Editor
+/// (desktop and web) share, as a nested class of its own (a nested class's member has the class's name in front in lean4:
+/// SkillCore.IsSkillName = skillCoreIsSkillName). A core file for `#:include ../ArshuCore/SkillCoreAST.cs`: pure static members, no Main;
+/// a tool calls them as `SkillCore.IsSkillName(...)`. What takes a tool's own harness, defaults or skills list stays with the tool.
+/// </summary>
+static class SkillCoreAST
+{
+    /// <summary>The skill rules: functions of their arguments only (no harness table, no file), so a lean4 port can prove them.</summary>
+    internal static class SkillCore
+    {
+        /// <summary>A character the first message's skill arguments may hold: ASCII letters and digits, and space - _ , . / = :</summary>
+        public static bool SafeSkillArgChar(char c) => char.IsAsciiLetterOrDigit(c) || c is ' ' or '-' or '_' or ',' or '.' or '/' or '=' or ':';
+
+        public static bool SafeSkillArgs(string text) => text.All(SafeSkillArgChar);
+
+        public static bool IsSkillNameChar(char c) => (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+
+        /// <summary>^[a-z0-9]+(-[a-z0-9]+)*$, read left to right: a letter or digit after each hyphen and at both ends.</summary>
+        public static bool IsSkillName(string name)
+        {
+            bool afterHyphen = true;
+            foreach (char c in name)
+            {
+                if (IsSkillNameChar(c)) afterHyphen = false;
+                else if (c == '-' && !afterHyphen) afterHyphen = true;
+                else return false;
+            }
+            return !afterHyphen;
+        }
+
+        public static bool IsRemoteChar(char c) => char.IsAsciiLetterOrDigit(c) || c is '.' or '_' or '~' or '/' or '-';
+
+        /// <summary>A skills remote: empty (no download), or an https URL plain enough for the install skill to put on a command line.</summary>
+        public static bool ValidSkillsRemote(string text) => text.Length == 0 || (text.StartsWith("https://", StringComparison.Ordinal) && text.Length > 8 && text[8..].All(IsRemoteChar));
+
+        /// <summary>How a harness start reads in a message: on the skill's prompt, or with none.</summary>
+        public static string OnSkill(string skillPrompt) => skillPrompt.Length == 0 ? "with no skill" : "on: " + skillPrompt;
+    }
+}
+
+/// <summary>
+/// ArshuCore.HostLayout, the csharp side of lean4/ArshuCore/ArshuCore/HostLayout.lean: the part of the session host (SessionHostAST) that the
+/// Launcher, the Session and the Editor all use: the rectangle of a window, the split of the work area between the terminal and the
+/// browser, why a host cannot lay the windows out (HostError), the terminal this launch runs in (CallerTerminal) and the ratio rules.
+/// A core file for `#:include ../ArshuCore/HostLayoutAST.cs`: pure static members, no Main; a tool says `using static HostLayoutAST;`.
+/// </summary>
+static class HostLayoutAST
+{
+    /// <summary>How long a window may take to appear.</summary>
+    internal static readonly TimeSpan WindowWait = TimeSpan.FromSeconds(30);
+
+    /// <summary>The narrowest ratio a side-by-side layout gives the terminal.</summary>
+    internal const string NarrowestRatio = "1:2";
+
+    internal static string NeverAppeared(string what) => $"Error: {what} did not appear within {WindowWait.TotalSeconds:0}s.";
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Rect { public int Left, Top, Right, Bottom; }
+
+    internal enum HostKind { WorkAreaSpi, WorkAreaOsascript, NoWorkArea, NoDisplay, WindowNeverAppeared, HandleNotNumber, TabStays, NoTerminalWindow, NotTerminalApp, NoTerminalWindowFromOsascript, Wayland, NoWindowId }
+
+    /// <summary>Why the host cannot lay the windows out (lean4 HostError): the work area is unknown, a window never appears, or the terminal cannot be moved.</summary>
+    internal sealed class HostError
+    {
+        internal HostKind Kind { get; }
+        private readonly string _text;
+        private HostError(HostKind kind, string text = "") { Kind = kind; _text = text; }
+        internal static HostError WorkAreaSpi(string detail) => new(HostKind.WorkAreaSpi, detail);
+        internal static HostError WorkAreaOsascript(string output) => new(HostKind.WorkAreaOsascript, output);
+        internal static HostError NoWorkArea() => new(HostKind.NoWorkArea);
+        internal static HostError NoDisplay(string display) => new(HostKind.NoDisplay, display);
+        internal static HostError WindowNeverAppeared(string what) => new(HostKind.WindowNeverAppeared, what);
+        internal static HostError HandleNotNumber(string handle) => new(HostKind.HandleNotNumber, handle);
+        internal static HostError TabStays(string answer) => new(HostKind.TabStays, answer);
+        internal static HostError NoTerminalWindow() => new(HostKind.NoTerminalWindow);
+        internal static HostError NotTerminalApp() => new(HostKind.NotTerminalApp);
+        internal static HostError NoTerminalWindowFromOsascript(string id) => new(HostKind.NoTerminalWindowFromOsascript, id);
+        internal static HostError Wayland() => new(HostKind.Wayland);
+        internal static HostError NoWindowId() => new(HostKind.NoWindowId);
+
+        internal string Message() => Kind switch
+        {
+            HostKind.WorkAreaSpi => $"Error: SystemParametersInfo(SPI_GETWORKAREA) failed ({_text}).",
+            HostKind.WorkAreaOsascript => $"Error: could not read the screen's visible area through osascript: {_text}",
+            HostKind.NoWorkArea => "Error: the window manager publishes no work area (_NET_WORKAREA); use an EWMH desktop (GNOME, KDE, Xfce, ...).",
+            HostKind.NoDisplay => $"Error: cannot open the X11 display '{_text}'.",
+            HostKind.WindowNeverAppeared => NeverAppeared(_text),
+            HostKind.HandleNotNumber => $"the window handle '{_text}' is no number",
+            HostKind.TabStays => _text,
+            HostKind.NoTerminalWindow => "this runs in no terminal window it can move (an IDE's or an app's)",
+            HostKind.NotTerminalApp => "only Terminal.app can be moved",
+            HostKind.NoTerminalWindowFromOsascript => $"Terminal.app gave no window through osascript: {_text}",
+            HostKind.Wayland => "Wayland lets no app place windows",
+            _ => "this terminal sets no WINDOWID and is not the active window",
+        };
+    }
+
+    /// <summary>The terminal this launch runs in: Move places it in an area; null, or why it could not.</summary>
+    internal sealed record CallerTerminal(Func<Rect, string?> Move);
+
+    internal static bool ParseRatioPart(string text, out int value)
+    {
+        value = 0;
+        string digits = text.Trim(' ', '\t');
+        if (digits.Length is 0 or > 2) return false;
+        foreach (char c in digits)
+        {
+            if (c is < '0' or > '9') return false;
+            value = value * 10 + (c - '0');
+        }
+        return value > 0;
+    }
+
+    /// <summary>A ratio "t:b" of whole numbers 1-99, spaces or tabs allowed around each; ASCII digits only.</summary>
+    internal static bool ParseRatio(string text, out int terminalPart, out int browserPart)
+    {
+        terminalPart = browserPart = 0;
+        string[] parts = text.Split(':');
+        return parts.Length == 2 && ParseRatioPart(parts[0], out terminalPart) && ParseRatioPart(parts[1], out browserPart);
+    }
+
+    /// <summary>
+    /// The ratio a side-by-side layout takes instead of one that leaves the terminal narrower than 1:2, which falls short
+    /// of the width it can take (Windows Terminal stopped at 691 px of 2560); null when this one stands. Stacked, any holds.
+    /// </summary>
+    internal static string? CappedRatio(string position, string ratio) =>
+        position is "left:right" or "right:left" && ParseRatio(ratio, out int terminalPart, out int browserPart) && browserPart > 2 * terminalPart
+            ? NarrowestRatio : null;
+
+    /// <summary>
+    /// Splits the work area between the terminal and the browser: side by side for left:right / right:left, stacked
+    /// for top:bottom / bottom:top, the terminal taking terminalPart/(terminalPart+browserPart) of the split axis.
+    /// </summary>
+    internal static void Layout(Rect work, string position, int terminalPart, int browserPart, out Rect terminal, out Rect browser)
+    {
+        bool sideBySide = position is "left:right" or "right:left";
+        bool terminalFirst = position is "left:right" or "top:bottom";
+        int start = sideBySide ? work.Left : work.Top;
+        int end = sideBySide ? work.Right : work.Bottom;
+        int terminalSize = (int)(((long)end - start) * terminalPart / (terminalPart + browserPart));   // in 64 bits: a wide work area times the part overflows an int
+        int split = terminalFirst ? start + terminalSize : end - terminalSize;
+        (int tStart, int tEnd, int bStart, int bEnd) = terminalFirst ? (start, split, split, end) : (split, end, start, split);
+        terminal = sideBySide
+            ? new Rect { Left = tStart, Right = tEnd, Top = work.Top, Bottom = work.Bottom }
+            : new Rect { Left = work.Left, Right = work.Right, Top = tStart, Bottom = tEnd };
+        browser = sideBySide
+            ? new Rect { Left = bStart, Right = bEnd, Top = work.Top, Bottom = work.Bottom }
+            : new Rect { Left = work.Left, Right = work.Right, Top = bStart, Bottom = bEnd };
+    }
+}
+
+/// <summary>
+/// ArshuCore.CommandLine, the csharp side of lean4/ArshuCore/ArshuCore/CommandLine.lean: a text as one sh word. A core file is plain code
+/// for `#:include ../ArshuCore/CommandLineAST.cs`: pure static members, no Main, no top-level statements. (lean4 also models .NET's
+/// PasteArguments and the Windows command line; the csharp tools leave those to ProcessStartInfo.ArgumentList.)
+/// </summary>
+static class CommandLineAST
+{
+    /// <summary>The text as one sh word: in single quotes, each ' written as '\''.</summary>
+    public static string ShQuoteChar(char c) => c == '\'' ? "'\\''" : c.ToString();
+
+    /// <summary>A text as one sh word.</summary>
+    public static string ShQuote(string text) => "'" + string.Concat(text.Select(ShQuoteChar)) + "'";
+}
+
+/// <summary>
+/// ArshuCore.HostRouteCore, the csharp side of lean4/ArshuCore/ArshuCore/HostRouteCore.lean: the window positions of a terminal:browser
+/// session. A core file is plain code for
+/// `#:include ../ArshuCore/HostRouteCoreAST.cs` (HostRouteRequestAST.cs adds the capture endpoint's routing and its 404, so a tool compiles only what it uses): pure static members, no Main, no top-level statements.
+/// </summary>
+static partial class HostRouteCoreAST
+{
+    /// <summary>terminal:browser placement; the first named side is the terminal's.</summary>
+    public static readonly string[] Positions = { "left:right", "right:left", "top:bottom", "bottom:top" };
+}
 
 /// <summary>
 /// A one-shot, command-line launcher for a joint session: a terminal running an AI harness (claude, codex or pi) and a
@@ -21,7 +244,7 @@ using System.Threading;
 /// The terminal starts the
 /// harness on a skill (--skill, else DefaultSkill, else joint-launcher, which asks what to do; --skillargs is the
 /// skill's own arguments). --group names the session group the launch is tracked in (default Default): the cost
-/// reader (runJointCost.cs) totals every session of a group, whatever launch started it.
+/// reader (runJointCostAST.cs) totals every session of a group, whatever launch started it.
 ///
 /// Repository-independent: copy this file and the skills folder into any folder (a repository or not) on Windows,
 /// macOS or Linux and run it from there with .NET 10+. It needs no package. runJointBuild.cs compiles it to the
@@ -66,9 +289,6 @@ class RunJointLauncher
     private static string LauncherSourcePath => Path.GetRelativePath(Directory.GetCurrentDirectory(), (string)AppContext.GetData("EntryPointFilePath")!).Replace('\\', '/');
     // Run from source, the SDK sets EntryPointFilePath; the published single-file binary (runJointBuild.cs) has none.
     private static readonly bool FromSource = AppContext.GetData("EntryPointFilePath") is string;
-    private static readonly TimeSpan WindowWait = TimeSpan.FromSeconds(30);
-    // terminal:browser placement; the first named side is the terminal's.
-    private static readonly string[] Positions = { "left:right", "right:left", "top:bottom", "bottom:top" };
 
     /// <summary>
     /// A harness the terminal can start: its command, the folder it reads a project's skills from (under the folder
@@ -83,7 +303,7 @@ class RunJointLauncher
         new("codex", "codex", ".agents/skills", "$",
             "npm install -g @openai/codex   (Node.js first: winget install --id OpenJS.NodeJS.LTS -e)",
             "npm install -g @openai/codex   (Node.js first), or on macOS brew install --cask codex"),
-        new("pi", "pi", ".pi/skills", "/skill:",
+        new("pi", "pi", ".agents/skills", "/skill:",
             "npm install -g @earendil-works/pi-coding-agent   (Node.js first: winget install --id OpenJS.NodeJS.LTS -e)",
             "npm install -g @earendil-works/pi-coding-agent   (Node.js first)"),
     };
@@ -133,9 +353,9 @@ class RunJointLauncher
     static int Main(string[] args)
     {
 #if EMBEDDED_COST
-        // The NativeAOT binary carries the cost reader (runJointBuildAST.cs compiles runJointCost.cs into it): --cost runs it, so the
+        // The NativeAOT binary carries the cost reader (runJointBuildAST.cs compiles runJointCostAST.cs into it): --cost runs it, so the
         // watcher and the joint skills need no script and no .NET. The script form of this tool has no such mode.
-        if (args.Length > 0 && args[0] == "--cost") return RunJointCost.Launch(args[1..]);
+        if (args.Length > 0 && args[0] == "--cost") return RunJointCostAST.Launch(args[1..]);
 #endif
         string? harnessName = null, skillName = null, skillArgs = null, position = null, ratio = null, groupName = null;
         bool doctor = false, newTerminal = false;
@@ -192,7 +412,7 @@ class RunJointLauncher
 
         var workspaceDir = Directory.GetCurrentDirectory();
         // The harness and the joint skills it runs (the browser's cost bar) find the cost reader through this variable (the script
-        // runJointCost.cs, or this binary when it carries the reader): they run in the user's folder, which seldom holds it, while
+        // runJointCostAST.cs, or this binary when it carries the reader): they run in the user's folder, which seldom holds it, while
         // the launcher knows where it is.
         if (FindCostReader() is string costReader) Environment.SetEnvironmentVariable("JOINT_COST_READER", costReader);
         string defaultsFile = Path.Combine(workspaceDir, DefaultsFileName);
@@ -209,9 +429,9 @@ class RunJointLauncher
         position ??= defaults.DefaultPosition;
         ratio ??= defaults.DefaultRatio;
         skillName ??= defaults.DefaultSkill;
-        if (Array.IndexOf(Positions, position) < 0)
+        if (Array.IndexOf(HostRouteCoreAST.Positions, position) < 0)
         {
-            Console.WriteLine($"Error: position '{position}' is not one of {string.Join(", ", Positions)} (terminal:browser).");
+            Console.WriteLine($"Error: position '{position}' is not one of {string.Join(", ", HostRouteCoreAST.Positions)} (terminal:browser).");
             return 1;
         }
         if (!ParseRatio(ratio, out int terminalPart, out int browserPart))
@@ -293,7 +513,7 @@ class RunJointLauncher
                 Console.WriteLine($"Error: --skillargs are a named skill's arguments; pass --skill too, or leave both out for {ChooserSkill}.");
                 return 1;
             }
-            if (!string.IsNullOrEmpty(skillArgs) && !SafeSkillArgs(skillArgs))
+            if (!string.IsNullOrEmpty(skillArgs) && !SkillCore.SafeSkillArgs(skillArgs))
             {
                 Console.WriteLine("Error: --skillargs takes letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).");
                 return 1;
@@ -513,7 +733,7 @@ class RunJointLauncher
         }
         if (hereTerminal)
         {
-            Console.WriteLine($"[joint-launcher] this terminal starts {harness!.Name} {OnSkill(skillPrompt)}; exiting it closes the browser.");
+            Console.WriteLine($"[joint-launcher] this terminal starts {harness!.Name} {SkillCore.OnSkill(skillPrompt)}; exiting it closes the browser.");
             // Windows ends this process as soon as the handler returns, so closing the console closes the browser in the handler.
             using var hungUp = PosixSignalRegistration.Create(PosixSignal.SIGHUP, _ => CloseSession(browser));
             int exitCode = RunHarnessHere(workspaceDir, harness, harnessPath!, skillPrompt, new List<string>());
@@ -521,7 +741,7 @@ class RunJointLauncher
             RemoveSessionFile(sessionFile);
             return exitCode;
         }
-        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} {OnSkill(skillPrompt)}");
+        Console.WriteLine($"[joint-launcher] the {position.Split(':')[0]} terminal starts {harness!.Name} {SkillCore.OnSkill(skillPrompt)}");
         Console.WriteLine("[joint-launcher] done: the windows stay open on their own; close them to end the session.");
         return 0;
     }
@@ -614,7 +834,7 @@ class RunJointLauncher
         }
         if (FindCostReader() is not string reader)
         {
-            Console.WriteLine($"[joint-cost] {CostReaderMissing}");
+            Console.WriteLine($"[joint-cost] {CostReaderAST.CostReaderMissing}");
             return null;
         }
         // The watcher outlives this tool and holds none of its streams; it is not waited for.
@@ -636,9 +856,7 @@ class RunJointLauncher
         return null;
     }
 
-    private const string CostReaderMissing = "runJointCost.cs not found beside this tool: this session's cost is not captured";
-
-    /// <summary>How the reader runs: "dotnet run runJointCost.cs -- args" for the script, "&lt;binary&gt; --cost args" for the reader
+    /// <summary>How the reader runs: "dotnet run runJointCostAST.cs -- args" for the script, "&lt;binary&gt; --cost args" for the reader
     /// a binary carries. The two ways to ship this tool stay independent: the script needs the .cs beside it (or in ../ArshuCost)
     /// and the binary needs nothing.</summary>
     static (string File, List<string> Args) CostCommand(string reader, params string[] args)
@@ -653,10 +871,10 @@ class RunJointLauncher
     /// <summary>The binary itself: the cost reader is compiled into it.</summary>
     static string? FindCostReader() => Environment.ProcessPath;
 #else
-    /// <summary>The cost reader (runJointCost.cs) beside this tool, else in ../ArshuCost; null when neither has it.</summary>
+    /// <summary>The cost reader (runJointCostAST.cs) beside this tool, else in ../ArshuCost; null when neither has it.</summary>
     static string? FindCostReader()
     {
-        foreach (var candidate in new[] { Path.Combine(ToolDir(), "runJointCost.cs"), Path.Combine(ToolDir(), "..", "ArshuCost", "runJointCost.cs") })
+        foreach (var candidate in CostReaderAST.CostReaderCandidates(ToolDir()))
             if (File.Exists(candidate)) return Path.GetFullPath(candidate);
         return null;
     }
@@ -1224,7 +1442,7 @@ Answer 'refused no new window appeared'
     /// </summary>
     static string[]? LinuxTerminalCommand(string workspaceDir, string title, string harnessCommand, string skillPrompt)
     {
-        string script = $"cd {ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + ShQuote(skillPrompt))}; exec bash";
+        string script = $"cd {CommandLineAST.ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + CommandLineAST.ShQuote(skillPrompt))}; exec bash";
         foreach (var (name, prefix) in new (string, string[])[]
                  {
                      ("gnome-terminal", new[] { "--title", title, "--" }),
@@ -1242,8 +1460,6 @@ Answer 'refused no new window appeared'
         }
         return null;
     }
-
-    static string ShQuote(string text) => "'" + text.Replace("'", "'\\''") + "'";
 
     /// <summary>
     /// The command that runs this launcher with the given arguments, as the help, the doctor and the embedded skills
@@ -1267,7 +1483,7 @@ Answer 'refused no new window appeared'
     static string? OpenMacTerminal(string workspaceDir, string title, string harnessCommand, string skillPrompt, Rect area)
     {
         static string AppleScriptString(string text) => "\"" + text.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
-        string command = $"cd {ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + ShQuote(skillPrompt))}";
+        string command = $"cd {CommandLineAST.ShQuote(workspaceDir)} && {harnessCommand}{(skillPrompt.Length == 0 ? "" : " " + CommandLineAST.ShQuote(skillPrompt))}";
         string script = string.Join("\n",
             "tell application \"Terminal\"",
             "  activate",
@@ -1378,7 +1594,7 @@ Answer 'refused no new window appeared'
         string remote = defaults?.SkillsRemote ?? InitialDefaults.SkillsRemote;
         Check(true, $"skills folder {FindSkillsFolder()}, SkillsRemote {(remote.Length == 0 ? "(none)" : remote)}", "");
         string? costReader = FindCostReader();
-        Check(costReader != null, costReader != null ? $"cost reader {costReader}" : CostReaderMissing, "copy runJointCost.cs beside the tool", required: false);
+        Check(costReader != null, costReader != null ? $"cost reader {costReader}" : CostReaderAST.CostReaderMissing, "copy runJointCostAST.cs beside the tool", required: false);
         if (defaults != null)
         {
             foreach (var (name, path) in defaults.Skills)
@@ -1456,7 +1672,9 @@ Answer 'refused no new window appeared'
         }
         try
         {
-            using var doc = JsonDocument.Parse(text);
+            using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = int.MaxValue });
+            // Every string must be valid UTF-16 (a lone surrogate escape is not JSON here), and nesting has no limit, as the lean4 parser reads it.
+            using (var strings = new Utf8JsonWriter(Stream.Null, new JsonWriterOptions { MaxDepth = int.MaxValue })) doc.RootElement.WriteTo(strings);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
             {
                 error = Fix("is not a JSON object");
@@ -1475,7 +1693,7 @@ Answer 'refused no new window appeared'
                     error = Fix($"has no string {key}");
                     return null;
                 }
-                values[key] = AsciiTrim(value.GetString()!);
+                values[key] = TextAST.AsciiTrim(value.GetString()!);
             }
             string harness = values["DefaultHarness"].ToLowerInvariant();
             if (harness.Length > 0 && FindHarness(harness) == null)
@@ -1484,9 +1702,9 @@ Answer 'refused no new window appeared'
                 return null;
             }
             string position = values["DefaultPosition"].ToLowerInvariant();
-            if (Array.IndexOf(Positions, position) < 0)
+            if (Array.IndexOf(HostRouteCoreAST.Positions, position) < 0)
             {
-                error = Fix($"has DefaultPosition '{values["DefaultPosition"]}' (use one of {string.Join(", ", Positions)}, terminal:browser)");
+                error = Fix($"has DefaultPosition '{values["DefaultPosition"]}' (use one of {string.Join(", ", HostRouteCoreAST.Positions)}, terminal:browser)");
                 return null;
             }
             if (!ParseRatio(values["DefaultRatio"], out _, out _))
@@ -1503,12 +1721,12 @@ Answer 'refused no new window appeared'
             foreach (var skill in skillsElement.EnumerateObject())
             {
                 if (!Regex.IsMatch(skill.Name, "^[a-z0-9]+(-[a-z0-9]+)*\\z") || IsCarriedSkill(skill.Name)
-                    || skill.Value.ValueKind != JsonValueKind.String || AsciiTrim(skill.Value.GetString()!).Length == 0)
+                    || skill.Value.ValueKind != JsonValueKind.String || TextAST.AsciiTrim(skill.Value.GetString()!).Length == 0)
                 {
                     error = Fix($"has Skills entry '{skill.Name}': a skill name is lowercase letters, digits and single hyphens, not one of the tool's skills ({CarriedSkillNames()}), with its SKILL.md path as a string");
                     return null;
                 }
-                skills[skill.Name] = AsciiTrim(skill.Value.GetString()!);
+                skills[skill.Name] = TextAST.AsciiTrim(skill.Value.GetString()!);
             }
             string defaultSkill = values["DefaultSkill"];
             if (defaultSkill.Length > 0 && !IsCarriedSkill(defaultSkill) && !skills.ContainsKey(defaultSkill))
@@ -1524,9 +1742,9 @@ Answer 'refused no new window appeared'
                     error = Fix("has no string SkillsRemote");
                     return null;
                 }
-                skillsRemote = AsciiTrim(remoteElement.GetString()!);
+                skillsRemote = TextAST.AsciiTrim(remoteElement.GetString()!);
             }
-            if (!ValidSkillsRemote(skillsRemote))
+            if (!SkillCore.ValidSkillsRemote(skillsRemote))
             {
                 error = Fix($"has SkillsRemote '{skillsRemote}' (use \"\" for no download, or an https URL of letters, digits and . _ ~ / -)");
                 return null;
@@ -1557,39 +1775,7 @@ Answer 'refused no new window appeared'
         json.WriteEndObject();
     }
 
-    static bool ParseRatio(string text, out int terminalPart, out int browserPart)
-    {
-        terminalPart = browserPart = 0;
-        var m = Regex.Match(text, @"^[ \t]*([0-9]{1,2})[ \t]*:[ \t]*([0-9]{1,2})[ \t]*\z");
-        return m.Success
-            && int.TryParse(m.Groups[1].Value, out terminalPart) && terminalPart > 0
-            && int.TryParse(m.Groups[2].Value, out browserPart) && browserPart > 0;
-    }
-
     // Defaults text is read by ASCII rules only: whitespace is space, tab, CR and LF.
-    static string AsciiTrim(string text) => text.Trim(' ', '\t', '\r', '\n');
-
-    /// <summary>
-    /// Splits the work area between the terminal and the browser: side by side for left:right / right:left, stacked
-    /// for top:bottom / bottom:top, the terminal taking terminalPart/(terminalPart+browserPart) of the split axis.
-    /// </summary>
-    static void Layout(Rect work, string position, int terminalPart, int browserPart, out Rect terminal, out Rect browser)
-    {
-        bool sideBySide = position is "left:right" or "right:left";
-        bool terminalFirst = position is "left:right" or "top:bottom";
-        int start = sideBySide ? work.Left : work.Top;
-        int end = sideBySide ? work.Right : work.Bottom;
-        int terminalSize = (int)(((long)end - start) * terminalPart / (terminalPart + browserPart));   // in 64 bits: a wide work area times the part overflows an int
-        int split = terminalFirst ? start + terminalSize : end - terminalSize;
-        (int tStart, int tEnd, int bStart, int bEnd) = terminalFirst ? (start, split, split, end) : (split, end, start, split);
-        terminal = sideBySide
-            ? new Rect { Left = tStart, Right = tEnd, Top = work.Top, Bottom = work.Bottom }
-            : new Rect { Left = work.Left, Right = work.Right, Top = tStart, Bottom = tEnd };
-        browser = sideBySide
-            ? new Rect { Left = bStart, Right = bEnd, Top = work.Top, Bottom = work.Bottom }
-            : new Rect { Left = work.Left, Right = work.Right, Top = bStart, Bottom = bEnd };
-    }
-
     static Harness? FindHarness(string name) => Array.Find(Harnesses, h => h.Name == name);
 
     static string HarnessNames() => string.Join(", ", Harnesses.Select(h => h.Name));
@@ -1706,9 +1892,6 @@ Answer 'refused no new window appeared'
     static List<string> LostSkills(string workspaceDir, Harness harness, string skillsFolder) =>
         FolderSkills.Where(s => !SkillInstalled(workspaceDir, harness, s.Name, s.Files) && !FolderHolds(skillsFolder, s)).Select(s => s.Name).ToList();
 
-    /// <summary>A skills remote: empty (no download), or an https URL plain enough for the install skill to put on a command line.</summary>
-    static bool ValidSkillsRemote(string text) => text.Length == 0 || Regex.IsMatch(text, @"^https://[A-Za-z0-9._~/-]+\z");
-
     /// <summary>What is lost and where it comes from, for the doctor and a launch.</summary>
     static string LostSkillsWhy(IReadOnlyList<string> lost, string skillsFolder, string remote) =>
         $"{string.Join(", ", lost)} not in {skillsFolder}: " + (remote.Length == 0
@@ -1780,7 +1963,7 @@ Answer 'refused no new window appeared'
             OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
         string prompt = native
             ? harness.SkillPrefix + name + (string.IsNullOrEmpty(skillArgs) ? "" : " " + skillArgs)
-            : $"Read the skill {skillFile} and follow it" + (string.IsNullOrEmpty(skillArgs) ? "." : $", with the arguments: {skillArgs}");
+            : $"Read the joint skill {skillFile} and follow it" + (string.IsNullOrEmpty(skillArgs) ? "." : $", with the arguments: {skillArgs}");
         foreach (char c in prompt)
         {
             if (c is '"' or '\'' or '`' or ';' or '&' or '|' or '<' or '>' or '^' or '%' or '!' or '\r' or '\n')
@@ -1827,13 +2010,6 @@ Answer 'refused no new window appeared'
         return Process.Start(start) ?? throw new InvalidOperationException($"could not start {harnessPath}");
     }
 
-    static bool SafeSkillArgs(string text)
-    {
-        foreach (char c in text)
-            if (!(char.IsAsciiLetterOrDigit(c) || c is ' ' or '-' or '_' or ',' or '.' or '/' or '=' or ':')) return false;
-        return true;
-    }
-
     static string? FindOnPath(string file)
     {
         foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
@@ -1866,13 +2042,13 @@ is needed; runJointLauncher.json is created there on the first session.
                          (drives the shared browser with Playwright: Node.js and a standard Playwright) come from
                          the skills folder beside the launcher or above it, joint-launcher-install and joint-launcher-doctor are embedded;
                          all are written to the harness's skills folder
-                         (.claude/skills, .agents/skills, .pi/skills) when missing, never over a copy already there;
+                         (.claude/skills, .agents/skills for codex and pi) when missing, never over a copy already there;
                          other skills are named with their SKILL.md path in Skills of runJointLauncher.json.
   --skillargs "<args>"   the skill's own arguments, e.g. --skill my-review --skillargs "login page".
   --group <name>         the session group this launch is tracked in (default: Default; for this run only, never saved).
                          A group is made by using its name: 1-40 ASCII letters, digits, spaces or . _ & + -. The joint cost
                          bar shows the current session's cost and its group's total over every launch in the group
-                         (runJointCost.cs --groups lists them).
+                         (runJointCostAST.cs --groups lists them).
   --position <t:b>       where the terminal and the browser go: left:right, right:left (side by side) or
                          top:bottom, bottom:top (stacked); the terminal is the first named side.
   --ratio <t>:<b>        the terminal's share against the browser's along the split, e.g. 1:2, 1:1. Side by side the
@@ -1904,9 +2080,6 @@ Writes <working folder>/.joint/joint-launcher/session.json (cdp, browserPid, har
 attach to. The session ends when you close its windows.
 """);
     }
-
-    /// <summary>How a harness start reads in a message: on the skill's prompt, or with none.</summary>
-    static string OnSkill(string skillPrompt) => skillPrompt.Length == 0 ? "with no skill" : "on: " + skillPrompt;
 
     /// <summary>The status page with the notice (why the harness starts without its skill) as a line before the last one; unchanged when there is none.</summary>
     static string WithSkillNotice(string page, string skillNotice) =>
@@ -2130,8 +2303,6 @@ attach to. The session ends when you close its windows.
         return null;
     }
 
-    static string NeverAppeared(string what) => $"Error: {what} did not appear within {WindowWait.TotalSeconds:0}s.";
-
     static List<IntPtr> TopLevelWindows(string windowClass)
     {
         var found = new List<IntPtr>();
@@ -2263,9 +2434,6 @@ terminal running this harness beside a shared browser on DevTools port 127.0.0.1
 
     /// <summary>The embedded skills as the tool uses them: EmbeddedSkillTexts as JointSkill records.</summary>
     private static readonly JointSkill[] EmbeddedSkills = EmbeddedSkillTexts.Select(t => new JointSkill(t.Name, t.Text, t.HelperName, t.HelperText)).ToArray();
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct Rect { public int Left, Top, Right, Bottom; }
 
     delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
 

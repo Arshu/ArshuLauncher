@@ -1,0 +1,29 @@
+{
+  "name": "hn-cost",
+  "fps": 6,
+  "seconds": 6,
+  "marks": [
+    {
+      "name": "start",
+      "t": 0
+    },
+    {
+      "name": "10_cost_start",
+      "t": 0
+    },
+    {
+      "name": "10_cost_end",
+      "t": 6.006
+    },
+    {
+      "name": "end",
+      "t": 6.006
+    }
+  ],
+  "gifs": [
+    {
+      "name": "hn-11-cost",
+      "bytes": 247034
+    }
+  ]
+}
