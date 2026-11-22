@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Linq;
+using static ProcessAST;
 using static SkillCoreAST;
 using static HostLayoutAST;
 
@@ -26,6 +27,8 @@ static class CostReaderAST
 {
     public const string CostReaderName = "runJointCostAST.cs";
 
+    public const string CostReaderBinaryName = "runJointCostAST";
+
     public const string CostReaderMissing = "runJointCostAST.cs not found beside this tool: this session's cost is not captured";
 
     /// <summary>Where the cost reader is looked for, in order: beside the tool, else in ../ArshuCost.</summary>
@@ -35,6 +38,56 @@ static class CostReaderAST
     /// <summary>The arguments of the cost reader's watcher on the workspace folder for the harness.</summary>
     public static List<string> CostWatchArgs(string reader, string workspaceDir, string harness) =>
         new() { "run", reader, "--", "--watch", "--folder", workspaceDir, "--harness", harness };
+
+    /// <summary>
+    /// Every place the cost reader is looked for, in order: the source candidates (CostReaderCandidates), then the NativeAOT
+    /// binary beside the tool, in ../ArshuCost, and in ../../ArshuCost/&lt;tool folder&gt; (the Tools/&lt;lang&gt;/&lt;Tool&gt;/&lt;platform&gt; layout).
+    /// </summary>
+    public static List<string> CostReaderAllCandidates(string tool, bool windows)
+    {
+        string binary = windows ? CostReaderBinaryName + ".exe" : CostReaderBinaryName;
+        var all = CostReaderCandidates(tool);
+        all.Add(Path.Combine(tool, binary));
+        all.Add(Path.Combine(tool, "..", "ArshuCost", binary));
+        all.Add(Path.Combine(tool, "..", "..", "ArshuCost", Path.GetFileName(tool), binary));
+        return all;
+    }
+
+    /// <summary>The program and arguments that start the watcher: dotnet for the source file, the binary itself otherwise.</summary>
+    public static (string File, List<string> Args) CostReaderCommand(string reader, string workspaceDir, string harness) =>
+        reader.EndsWith(".cs")
+            ? ("dotnet", CostWatchArgs(reader, workspaceDir, harness))
+            : (reader, new List<string> { "--watch", "--folder", workspaceDir, "--harness", harness });
+}
+
+/// <summary>
+/// ArshuCore.Process, the csharp side of lean4/ArshuCore/ArshuCore/Process.lean: running a tool to its end. A core file is plain code
+/// for `#:include ../ArshuCore/ProcessAST.cs`: pure static members, no Main, no top-level statements.
+/// </summary>
+static class ProcessAST
+{
+    /// <summary>What a finished tool hands back: its standard output, plus its errors when it failed (lean4 toolOutput).</summary>
+    public static string ToolOutput(int exitCode, string stdout, string stderr) => exitCode == 0 ? stdout : stdout + stderr;
+
+    /// <summary>Runs a tool to completion and returns its standard output (plus its errors when it fails) with its exit code, which is -1 when it could not start (lean4 runTool).</summary>
+    public static (string Output, int ExitCode) RunTool(string file, IEnumerable<string> args)
+    {
+        var start = new ProcessStartInfo(file) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        try
+        {
+            using var process = Process.Start(start)!;
+            var errors = process.StandardError.ReadToEndAsync();
+            string output = process.StandardOutput.ReadToEnd();
+            process.WaitForExit();
+            int exitCode = process.ExitCode;
+            return (ToolOutput(exitCode, output, errors.Result), exitCode);
+        }
+        catch (System.ComponentModel.Win32Exception e)
+        {
+            return (e.Message, -1);
+        }
+    }
 }
 
 /// <summary>
@@ -70,6 +123,9 @@ static class SkillCoreAST
     /// <summary>The skill rules: functions of their arguments only (no harness table, no file), so a lean4 port can prove them.</summary>
     internal static class SkillCore
     {
+        /// <summary>The skills not embedded: a launch copies them from the tracked skills folder (FindSkillsFolder), one source for every tool.</summary>
+        public const string SkillsFolderName = "skills";
+
         /// <summary>A character the first message's skill arguments may hold: ASCII letters and digits, and space - _ , . / = :</summary>
         public static bool SafeSkillArgChar(char c) => char.IsAsciiLetterOrDigit(c) || c is ' ' or '-' or '_' or ',' or '.' or '/' or '=' or ':';
 
@@ -116,10 +172,26 @@ static class HostLayoutAST
 
     internal static string NeverAppeared(string what) => $"Error: {what} did not appear within {WindowWait.TotalSeconds:0}s.";
 
+    /// <summary>The terminal window the session opened, so ending the session can close it.</summary>
+    internal abstract record TerminalWindow
+    {
+        internal sealed record Windows(IntPtr Handle) : TerminalWindow;
+        internal sealed record X11(IntPtr Window) : TerminalWindow;
+        internal sealed record Mac(string Window, string Tty) : TerminalWindow;
+    }
+
+    /// <summary>What opening the session's terminal came to (lean4 TerminalOutcome): a window the session knows, a terminal opened whose window is not known, or why it did not open.</summary>
+    internal abstract record TerminalOutcome
+    {
+        internal sealed record Opened(TerminalWindow Terminal) : TerminalOutcome;
+        internal sealed record Untracked : TerminalOutcome;
+        internal sealed record Failed(string Message) : TerminalOutcome;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct Rect { public int Left, Top, Right, Bottom; }
 
-    internal enum HostKind { WorkAreaSpi, WorkAreaOsascript, NoWorkArea, NoDisplay, WindowNeverAppeared, HandleNotNumber, TabStays, NoTerminalWindow, NotTerminalApp, NoTerminalWindowFromOsascript, Wayland, NoWindowId }
+    internal enum HostKind { WorkAreaSpi, WorkAreaOsascript, NoWorkArea, NoDisplay, WindowNeverAppeared, HandleNotNumber, TabStays, NoTerminalWindow, NotTerminalApp, NoTerminalWindowFromOsascript, Wayland, NoWindowId, NoTtyInChain, NoWindowHoldsTty, TtyInSeveralWindows }
 
     /// <summary>Why the host cannot lay the windows out (lean4 HostError): the work area is unknown, a window never appears, or the terminal cannot be moved.</summary>
     internal sealed class HostError
@@ -139,6 +211,9 @@ static class HostLayoutAST
         internal static HostError NoTerminalWindowFromOsascript(string id) => new(HostKind.NoTerminalWindowFromOsascript, id);
         internal static HostError Wayland() => new(HostKind.Wayland);
         internal static HostError NoWindowId() => new(HostKind.NoWindowId);
+        internal static HostError NoTtyInChain() => new(HostKind.NoTtyInChain);
+        internal static HostError NoWindowHoldsTty(string ttys) => new(HostKind.NoWindowHoldsTty, ttys);
+        internal static HostError TtyInSeveralWindows(string tty) => new(HostKind.TtyInSeveralWindows, tty);
 
         internal string Message() => Kind switch
         {
@@ -153,6 +228,9 @@ static class HostLayoutAST
             HostKind.NotTerminalApp => "only Terminal.app can be moved",
             HostKind.NoTerminalWindowFromOsascript => $"Terminal.app gave no window through osascript: {_text}",
             HostKind.Wayland => "Wayland lets no app place windows",
+            HostKind.NoTtyInChain => "no process this runs under holds a terminal (tty): it was detached from its terminal",
+            HostKind.NoWindowHoldsTty => $"no Terminal.app window holds the tty of this launch ({_text}): another terminal, or a session reattached on another tty",
+            HostKind.TtyInSeveralWindows => $"several Terminal.app windows claim the tty {_text}",
             _ => "this terminal sets no WINDOWID and is not the active window",
         };
     }
@@ -160,25 +238,25 @@ static class HostLayoutAST
     /// <summary>The terminal this launch runs in: Move places it in an area; null, or why it could not.</summary>
     internal sealed record CallerTerminal(Func<Rect, string?> Move);
 
-    internal static bool ParseRatioPart(string text, out int value)
+    internal static int? ParseRatioPart(string text)
     {
-        value = 0;
+        int value = 0;
         string digits = text.Trim(' ', '\t');
-        if (digits.Length is 0 or > 2) return false;
+        if (digits.Length is 0 or > 2) return null;
         foreach (char c in digits)
         {
-            if (c is < '0' or > '9') return false;
+            if (c is < '0' or > '9') return null;
             value = value * 10 + (c - '0');
         }
-        return value > 0;
+        return value > 0 ? value : null;
     }
 
     /// <summary>A ratio "t:b" of whole numbers 1-99, spaces or tabs allowed around each; ASCII digits only.</summary>
-    internal static bool ParseRatio(string text, out int terminalPart, out int browserPart)
+    internal static (int TerminalPart, int BrowserPart)? ParseRatio(string text)
     {
-        terminalPart = browserPart = 0;
         string[] parts = text.Split(':');
-        return parts.Length == 2 && ParseRatioPart(parts[0], out terminalPart) && ParseRatioPart(parts[1], out browserPart);
+        return parts.Length == 2 && ParseRatioPart(parts[0]) is int terminalPart && ParseRatioPart(parts[1]) is int browserPart
+            ? (terminalPart, browserPart) : null;
     }
 
     /// <summary>
@@ -186,7 +264,7 @@ static class HostLayoutAST
     /// of the width it can take (Windows Terminal stopped at 691 px of 2560); null when this one stands. Stacked, any holds.
     /// </summary>
     internal static string? CappedRatio(string position, string ratio) =>
-        position is "left:right" or "right:left" && ParseRatio(ratio, out int terminalPart, out int browserPart) && browserPart > 2 * terminalPart
+        position is "left:right" or "right:left" && ParseRatio(ratio) is (int terminalPart, int browserPart) && browserPart > 2 * terminalPart
             ? NarrowestRatio : null;
 
     /// <summary>
@@ -209,6 +287,58 @@ static class HostLayoutAST
             ? new Rect { Left = bStart, Right = bEnd, Top = work.Top, Bottom = work.Bottom }
             : new Rect { Left = work.Left, Right = work.Right, Top = bStart, Bottom = bEnd };
     }
+
+    /// <summary>A tty as ps and Terminal.app write it, as the bare name ("ttys003"); null for none ("", "?", "??").</summary>
+    internal static string? TtyName(string text)
+    {
+        string name = text.Trim(' ', '\t', '\r', '\n');
+        if (name.StartsWith("/dev/", StringComparison.Ordinal)) name = name[5..];
+        return name.Length == 0 || name.All(c => c == '?') ? null : name;
+    }
+
+    /// <summary>What MacTerminalTtysScript prints, one line "windowId tty" per tab: the window ids with the ttys of their tabs; lines of another shape are left out.</summary>
+    internal static List<(string Id, string Tty)> ParseMacWindowTtys(string output)
+    {
+        var tabs = new List<(string Id, string Tty)>();
+        foreach (string line in output.Split('\n'))
+        {
+            string[] parts = line.Trim(' ', '\t', '\r').Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 2 && parts[0].All(c => c is >= '0' and <= '9') && TtyName(parts[1]) is string tty) tabs.Add((parts[0], tty));
+        }
+        return tabs;
+    }
+
+    /// <summary>
+    /// The Terminal.app window of this launch: the first process of the chain (nearest first) whose tty a tab holds names its
+    /// window. A chain with no tty (detached), ttys no window holds (another terminal; a multiplexer's pane tty is no
+    /// window's, its client's is) or a tty two windows claim answers a named refusal, never a guess.
+    /// </summary>
+    internal static (string? Id, HostError? Error) MatchTerminalWindow(List<(string Id, string Tty)> tabs, List<string> chainTtys)
+    {
+        var ttys = chainTtys.Select(TtyName).OfType<string>().ToList();
+        if (ttys.Count == 0) return (null, HostError.NoTtyInChain());
+        return MatchTtys(tabs, ttys, ttys);
+    }
+
+    /// <summary>The first of the ttys (nearest first) that a window holds names it; a tty two windows claim is refused; all names the ttys of the refusal.</summary>
+    internal static (string? Id, HostError? Error) MatchTtys(List<(string Id, string Tty)> tabs, List<string> all, List<string> ttys)
+    {
+        foreach (string tty in ttys)
+        {
+            var ids = tabs.Where(t => t.Tty == tty).Select(t => t.Id).ToList();
+            if (ids.Count > 0) return ids.TrueForAll(id => id == ids[0]) ? (ids[0], null) : (null, HostError.TtyInSeveralWindows(tty));
+        }
+        return (null, HostError.NoWindowHoldsTty(string.Join(", ", all.Distinct())));
+    }
+
+    /// <summary>What MacWorkAreaScript prints, ^(-?\d+),(-?\d+),(\d+),(\d+)\s*$: the rectangle.</summary>
+    internal static Rect? ParseMacWorkArea(string output)
+    {
+        var m = Regex.Match(output, @"^(-?\d+),(-?\d+),(\d+),(\d+)\s*$");
+        if (!m.Success) return null;
+        int x = int.Parse(m.Groups[1].Value), y = int.Parse(m.Groups[2].Value);
+        return new Rect { Left = x, Top = y, Right = x + int.Parse(m.Groups[3].Value), Bottom = y + int.Parse(m.Groups[4].Value) };
+    }
 }
 
 /// <summary>
@@ -223,6 +353,17 @@ static class CommandLineAST
 
     /// <summary>A text as one sh word.</summary>
     public static string ShQuote(string text) => "'" + string.Concat(text.Select(ShQuoteChar)) + "'";
+
+    /// <summary>Why the command line is not a launch (lean4 ArgsError): an option needs its value, or the argument is unknown.</summary>
+    internal sealed class ArgsError
+    {
+        private readonly bool _needsValue;
+        private readonly string _text;
+        private ArgsError(bool needsValue, string text) { _needsValue = needsValue; _text = text; }
+        internal static ArgsError NeedsValue(string flag) => new(true, flag);
+        internal static ArgsError Unknown(string argument) => new(false, argument);
+        internal string Message() => _needsValue ? $"Error: {_text} needs a value." : $"Error: unknown argument '{_text}'.";
+    }
 }
 
 /// <summary>
@@ -280,7 +421,19 @@ static partial class HostRouteCoreAST
 /// </summary>
 class RunJointLauncher
 {
-    private const int CdpPort = 9222;               // the usual DevTools port browser MCP servers attach to
+    // The DevTools port: 9222 (the port browser MCP servers attach to), or the one JOINT_CDP_PORT names - a test run beside another joint session gives its tool another port;
+    // a value that is no port is an error (CdpPortError), never a fallback to 9222.
+    private static readonly int CdpPort = ReadCdpPort(out CdpPortError);
+    private static readonly string? CdpPortError;
+    static int ReadCdpPort(out string? error)
+    {
+        error = null;
+        string? text = Environment.GetEnvironmentVariable("JOINT_CDP_PORT");
+        if (string.IsNullOrEmpty(text)) return 9222;
+        if (int.TryParse(text, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int port) && port is >= 1024 and <= 65535) return port;
+        error = $"Error: JOINT_CDP_PORT '{text}' is not a port: a whole number from 1024 to 65535.";
+        return 9222;
+    }
     private const string TerminalWindowClass = "CASCADIA_HOSTING_WINDOW_CLASS";
     private const string ConsoleWindowClass = "ConsoleWindowClass";
     private const string ChromeWindowClass = "Chrome_WidgetWin_1";
@@ -352,6 +505,11 @@ class RunJointLauncher
 
     static int Main(string[] args)
     {
+        if (CdpPortError != null)
+        {
+            Console.WriteLine(CdpPortError);
+            return 1;
+        }
 #if EMBEDDED_COST
         // The NativeAOT binary carries the cost reader (runJointBuildAST.cs compiles runJointCostAST.cs into it): --cost runs it, so the
         // watcher and the joint skills need no script and no .NET. The script form of this tool has no such mode.
@@ -434,7 +592,7 @@ class RunJointLauncher
             Console.WriteLine($"Error: position '{position}' is not one of {string.Join(", ", HostRouteCoreAST.Positions)} (terminal:browser).");
             return 1;
         }
-        if (!ParseRatio(ratio, out int terminalPart, out int browserPart))
+        if (ParseRatio(ratio) is not (int terminalPart, int browserPart))
         {
             Console.WriteLine($"Error: ratio '{ratio}' is not <terminal>:<browser> with whole numbers 1-99, e.g. 1:4.");
             return 1;
@@ -895,7 +1053,8 @@ class RunJointLauncher
             for (int pid = Environment.ProcessId; chain.Count < MaxParents && processes.TryGetValue(pid, out var process); pid = process.Parent)
                 chain.Add((pid, Path.GetFileNameWithoutExtension(process.Name).ToLowerInvariant()));
             // An exited parent ends the walk (a nested script of a harness's shell); Claude Code names its own process, which leads on to the terminal.
-            if (!chain.Exists(p => p.Name == "windowsterminal") && int.TryParse(Environment.GetEnvironmentVariable("CLAUDE_PID"), out int harness))
+            // Not under a multiplexer: its panes inherit CLAUDE_PID from whoever started it, and that process sits in an unrelated tab.
+            if (!chain.Exists(p => p.Name == "windowsterminal") && !chain.Exists(p => Multiplexers.Contains(p.Name)) && int.TryParse(Environment.GetEnvironmentVariable("CLAUDE_PID"), out int harness))
             {
                 for (int pid = harness; chain.Count < MaxParents && processes.TryGetValue(pid, out var process); pid = process.Parent)
                     chain.Add((pid, Path.GetFileNameWithoutExtension(process.Name).ToLowerInvariant()));
@@ -904,7 +1063,8 @@ class RunJointLauncher
         }
         for (int pid = Environment.ProcessId; pid > 1 && chain.Count < MaxParents;)
         {
-            string[] parts = RunTool("ps", new[] { "-o", "ppid=", "-o", "comm=", "-p", pid.ToString() }, out int exit).Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+            (string psOut, int exit) = RunTool("ps", new[] { "-o", "ppid=", "-o", "comm=", "-p", pid.ToString() });
+            string[] parts = psOut.Trim().Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
             if (exit != 0 || parts.Length < 2 || !int.TryParse(parts[0], out int parent)) break;
             chain.Add((pid, Path.GetFileNameWithoutExtension(parts[1]).ToLowerInvariant()));
             pid = parent;
@@ -920,12 +1080,15 @@ class RunJointLauncher
     {
         if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CLAUDECODE"))) return FindHarness("claude");
         if (Environment.GetEnvironmentVariable("PI_CODING_AGENT") == "true") return FindHarness("pi");
+        // codex runs its commands in a PID namespace of its own (ps shows ppid 1), so no parent process names it; its children carry its thread id.
+        if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("CODEX_THREAD_ID"))) return FindHarness("codex");
         foreach (var (_, name) in chain)
             if (FindHarness(name) is Harness harness) return harness;
         return null;
     }
 
     private const int MaxParents = 32;
+    private static readonly string[] Multiplexers = { "herdr", "tmux", "psmux", "screen", "zellij" };
     private const uint Th32csSnapProcess = 2;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -957,6 +1120,12 @@ class RunJointLauncher
         why = "";
         if (OperatingSystem.IsWindows())
         {
+            // Under a multiplexer the chain names whichever tab started its server, not this window.
+            if (chain.Find(p => Multiplexers.Contains(p.Name)).Name is string multiplexer)
+            {
+                why = $"this runs inside {multiplexer}, whose window cannot be told from the process chain";
+                return null;
+            }
             // The process under Windows Terminal is the shell in this tab, and shares its console.
             int terminal = chain.FindIndex(p => p.Name == "windowsterminal");
             if (terminal > 0)
@@ -965,7 +1134,7 @@ class RunJointLauncher
                 string[] tab = TerminalTab("find", shell);
                 if (tab[0] != "window")
                 {
-                    why = tab[1];
+                    why = string.Join(" ", tab.Skip(1));
                     return null;
                 }
                 var window = (IntPtr)long.Parse(tab[1]);
@@ -1000,7 +1169,8 @@ class RunJointLauncher
                 why = "only Terminal.app can be moved";
                 return null;
             }
-            string id = RunTool("osascript", new[] { "-e", "tell application \"Terminal\" to id of front window" }, out int exit).Trim();
+            (string id, int exit) = RunTool("osascript", new[] { "-e", "tell application \"Terminal\" to id of front window" });
+            id = id.Trim();
             if (exit != 0 || id.Length == 0)
             {
                 why = $"Terminal.app gave no window through osascript: {id}";
@@ -1008,8 +1178,8 @@ class RunJointLauncher
             }
             return area =>
             {
-                string output = RunTool("osascript", new[] { "-e",
-                    $"tell application \"Terminal\" to set bounds of (first window whose id is {id}) to {{{area.Left}, {area.Top}, {area.Right}, {area.Bottom}}}" }, out int moved);
+                (string output, int moved) = RunTool("osascript", new[] { "-e",
+                    $"tell application \"Terminal\" to set bounds of (first window whose id is {id}) to {{{area.Left}, {area.Top}, {area.Right}, {area.Bottom}}}" });
                 return moved == 0 ? null : $"Terminal.app could not be moved through osascript: {output.Trim()}";
             };
         }
@@ -1036,7 +1206,8 @@ class RunJointLauncher
     static string[] TerminalTab(string action, int shell)
     {
         string script = $"$action = '{action}'\n$shell = {shell}\n{TerminalTabScript}";
-        string output = RunTool("powershell.exe", new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) }, out int exit).Trim();
+        (string output, int exit) = RunTool("powershell.exe", new[] { "-NoProfile", "-NonInteractive", "-EncodedCommand", Convert.ToBase64String(Encoding.Unicode.GetBytes(script)) });
+        output = output.Trim();
         string[] answer = output.Split(' ', action == "find" ? 3 : 2);
         return exit == 0 && answer.Length > 1 ? answer : new[] { "refused", $"PowerShell failed ({exit}): {output}" };
     }
@@ -1240,27 +1411,6 @@ Answer 'refused no new window appeared'
     static bool IsWayland() =>
         string.Equals(Environment.GetEnvironmentVariable("XDG_SESSION_TYPE"), "wayland", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>Runs a tool to completion and returns its standard output (plus its errors when it fails); exitCode is -1 when it could not start.</summary>
-    static string RunTool(string file, IEnumerable<string> args, out int exitCode)
-    {
-        var start = new ProcessStartInfo(file) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true };
-        foreach (var arg in args) start.ArgumentList.Add(arg);
-        try
-        {
-            using var process = Process.Start(start)!;
-            var errors = process.StandardError.ReadToEndAsync();
-            string output = process.StandardOutput.ReadToEnd();
-            process.WaitForExit();
-            exitCode = process.ExitCode;
-            return exitCode == 0 ? output : output + errors.Result;
-        }
-        catch (System.ComponentModel.Win32Exception e)
-        {
-            exitCode = -1;
-            return e.Message;
-        }
-    }
-
     /// <summary>
     /// Starts a GUI program on macOS/Linux so it outlives this launcher and holds none of its streams (an inherited stdout
     /// keeps a caller's pipe open): sh redirects them to /dev/null and execs the program, so the pid stays the program's.
@@ -1269,7 +1419,8 @@ Answer 'refused no new window appeared'
     {
         var start = new ProcessStartInfo("/bin/sh") { UseShellExecute = false };
         start.ArgumentList.Add("-c");
-        start.ArgumentList.Add("log=$1; shift; exec nohup \"$0\" \"$@\" </dev/null >\"$log\" 2>&1");
+        // setsid (Linux) first: nohup alone keeps the program in the caller's process group, and a harness that ends its command by killing the group (codex) took the browser with it
+        start.ArgumentList.Add("log=$1; shift; if command -v setsid >/dev/null 2>&1; then exec setsid nohup \"$0\" \"$@\" </dev/null >\"$log\" 2>&1; elif command -v perl >/dev/null 2>&1; then exec perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' nohup \"$0\" \"$@\" </dev/null >\"$log\" 2>&1; fi; exec nohup \"$0\" \"$@\" </dev/null >\"$log\" 2>&1");
         start.ArgumentList.Add(file);
         start.ArgumentList.Add(logFile);
         foreach (var arg in args) start.ArgumentList.Add(arg);
@@ -1282,7 +1433,7 @@ Answer 'refused no new window appeared'
         work = default;
         const string Script = "ObjC.import('AppKit'); var s = $.NSScreen.mainScreen; var f = s.frame; var v = s.visibleFrame; " +
                               "[v.origin.x, f.size.height - v.origin.y - v.size.height, v.size.width, v.size.height].map(Math.round).join(',')";
-        string output = RunTool("osascript", new[] { "-l", "JavaScript", "-e", Script }, out int exit);
+        (string output, int exit) = RunTool("osascript", new[] { "-l", "JavaScript", "-e", Script });
         var m = Regex.Match(output, @"^(-?\d+),(-?\d+),(\d+),(\d+)\s*$");
         if (exit != 0 || !m.Success) return $"Error: could not read the screen's visible area through osascript: {output.Trim()}";
         int x = int.Parse(m.Groups[1].Value), y = int.Parse(m.Groups[2].Value);
@@ -1473,7 +1624,7 @@ Answer 'refused no new window appeared'
     }
 
     // The embedded skills write {{launch}}, {{launch --doctor}} and {{launch --harness claude}} for the command that runs the launcher.
-    static string LaunchText(string text) => text.Replace("{{launch --doctor}}", LaunchCommand("--doctor")).Replace("{{launch --harness claude}}", LaunchCommand("--harness claude")).Replace("{{launch}}", LaunchCommand());
+    static string LaunchText(string text) => text.Replace("{{launch --doctor}}", LaunchCommand("--doctor").Replace("dotnet run ", "dotnet run --interactive ").Replace("dotnet run ", "dotnet run --no-build ")).Replace("{{launch --harness claude}}", LaunchCommand("--harness claude")).Replace("{{launch}}", LaunchCommand());
 
     /// <summary>
     /// Opens a Terminal.app window running the harness on the skill prompt in the workspace, titled and placed through
@@ -1494,7 +1645,7 @@ Answer 'refused no new window appeared'
             "  set w to first window whose tty of selected tab is tt",
             $"  set bounds of w to {{{area.Left}, {area.Top}, {area.Right}, {area.Bottom}}}",
             "end tell");
-        string output = RunTool("osascript", new[] { "-e", script }, out int exit);
+        (string output, int exit) = RunTool("osascript", new[] { "-e", script });
         return exit == 0 ? null : $"Error: Terminal.app could not be opened through osascript: {output.Trim()}";
     }
 
@@ -1619,7 +1770,9 @@ Answer 'refused no new window appeared'
         }
         string? browser = FindBrowser(defaults?.DefaultBrowser ?? InitialDefaults.DefaultBrowser, out string browserFound);
         Check(browser != null, browser != null ? $"browser {browser} ({browserFound})" : "a Chromium-based browser", browserFound);
-        Check(!PortAnswers(CdpPort), $"port {CdpPort} free (no joint session open)", "close the open session's browser window");
+        var (ownBrowser, sessionProblem) = OwnSessionBrowser();
+        if (sessionProblem != null) Console.WriteLine(sessionProblem);
+        Check(!PortAnswers(CdpPort) || ownBrowser, $"port {CdpPort} free (no joint session open)", "close the open session's browser window");
         // The launch's own skill checks on the defaults, once nothing above is missing: Ready means a launch with this
         // harness and no --skill opens the session (a missing or command-line-unsafe DefaultSkill file refused it).
         if (chosen != null && defaults != null && missing == 0)
@@ -1635,7 +1788,7 @@ Answer 'refused no new window appeared'
         }
         Console.WriteLine("joint-browser (optional: drives the shared browser with Playwright):");
         string? node = FindOnPath(isWindows ? "node.exe" : "node");
-        string nodeVersion = node == null ? "" : RunTool(node, new[] { "--version" }, out _).Trim();
+        string nodeVersion = node == null ? "" : RunTool(node, new[] { "--version" }).Output.Trim();
         bool nodeOk = Regex.Match(nodeVersion, @"^v(\d+)\.") is { Success: true } v && int.Parse(v.Groups[1].Value) >= 20;
         Check(nodeOk, node != null ? $"Node.js 20 or later ({node} {nodeVersion})" : "Node.js 20 or later (Playwright needs it)",
             isWindows ? "winget install --id OpenJS.NodeJS.LTS -e" : isMac ? "brew install node"
@@ -1707,7 +1860,7 @@ Answer 'refused no new window appeared'
                 error = Fix($"has DefaultPosition '{values["DefaultPosition"]}' (use one of {string.Join(", ", HostRouteCoreAST.Positions)}, terminal:browser)");
                 return null;
             }
-            if (!ParseRatio(values["DefaultRatio"], out _, out _))
+            if (ParseRatio(values["DefaultRatio"]) is null)
             {
                 error = Fix($"has DefaultRatio '{values["DefaultRatio"]}' (use <terminal>:<browser> with whole numbers 1-99, e.g. 1:4)");
                 return null;
@@ -1824,13 +1977,30 @@ Answer 'refused no new window appeared'
         string? missing = !File.Exists(script) ? $"{script} is missing" : PlaywrightPackage(workspaceDir) == null ? "Playwright is not installed (node <skills folder>/joint-browser/browser.mjs setup)" : null;
         if (missing == null)
         {
-            var info = new ProcessStartInfo("node") { WorkingDirectory = workspaceDir, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            // Windows: shell-executed, so the daemon inherits none of this process's handles. A redirected start passes on every
+            // inheritable handle, and a caller's pipe (`dotnet run ... | head`) then stays open until the daemon ends, which hangs the
+            // caller; the environment goes on this process, which ends right after.
+            bool windows = OperatingSystem.IsWindows();
+            var info = windows
+                ? new ProcessStartInfo("node") { WorkingDirectory = workspaceDir, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden }
+                // Linux: in its own session (setsid), or a harness that ends its command by killing the process group (codex) kills node before it has started the daemon
+                : new ProcessStartInfo(File.Exists("/usr/bin/setsid") ? "setsid" : File.Exists("/usr/bin/perl") ? "perl" : "node") { WorkingDirectory = workspaceDir, UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            if (info.FileName == "perl") { info.ArgumentList.Add("-MPOSIX"); info.ArgumentList.Add("-e"); info.ArgumentList.Add("POSIX::setsid(); exec @ARGV"); }
+            if (info.FileName != "node") info.ArgumentList.Add("node");
             info.ArgumentList.Add(script);
             info.ArgumentList.Add("costbar");
             info.ArgumentList.Add("start");
-            if (!string.IsNullOrEmpty(harnessName)) info.Environment["JOINT_HARNESS"] = harnessName;
-            info.Environment["JOINT_TOOL"] = "Joint Launcher";
-            try { Process.Start(info)?.Dispose(); }
+            if (windows)
+            {
+                if (!string.IsNullOrEmpty(harnessName)) Environment.SetEnvironmentVariable("JOINT_HARNESS", harnessName);
+                Environment.SetEnvironmentVariable("JOINT_TOOL", "Joint Launcher");
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(harnessName)) info.Environment["JOINT_HARNESS"] = harnessName;
+                info.Environment["JOINT_TOOL"] = "Joint Launcher";
+            }
+            try { var costbar = Process.Start(info); if (!windows) costbar?.StandardInput.Close(); costbar?.Dispose(); }
             catch (System.ComponentModel.Win32Exception) { missing = "node is not installed (Node.js 20+)"; }
         }
         Console.WriteLine(missing == null ? "[joint-launcher] cost bar starting in the browser (joint-browser costbar)" : $"[joint-launcher] no cost bar: {missing}");
@@ -2045,6 +2215,7 @@ is needed; runJointLauncher.json is created there on the first session.
                          (.claude/skills, .agents/skills for codex and pi) when missing, never over a copy already there;
                          other skills are named with their SKILL.md path in Skills of runJointLauncher.json.
   --skillargs "<args>"   the skill's own arguments, e.g. --skill my-review --skillargs "login page".
+                         Letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).
   --group <name>         the session group this launch is tracked in (default: Default; for this run only, never saved).
                          A group is made by using its name: 1-40 ASCII letters, digits, spaces or . _ & + -. The joint cost
                          bar shows the current session's cost and its group's total over every launch in the group
@@ -2092,7 +2263,7 @@ attach to. The session ends when you close its windows.
         string shared = skipHarness ? "This window is shared with the AI session that opened it" : "This window is shared with the AI session in the terminal";
         string starting = skipHarness ? $"    <li>Browser-only joint session: attach from your harness with <code>{BrowserSkill}</code> (CDP <code>http://127.0.0.1:{CdpPort}</code>).</li>\n"
             : $"    <li>{WebUtility.HtmlEncode(harnessName)} is starting in the terminal{(skillPrompt.Length == 0 ? "" : " on <code>" + WebUtility.HtmlEncode(skillPrompt) + "</code>")}.</li>\n";
-        return """
+        return ("""
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Joint session</title>
 <style>
@@ -2107,14 +2278,14 @@ attach to. The session ends when you close its windows.
   <h1>Joint session</h1>
   <p class="sub">
 """ + shared + """
- (DevTools protocol on 127.0.0.1:9222).</p>
+ (DevTools protocol on 127.0.0.1:{{cdp}}).</p>
   <ol>
 
 """ + starting + """
-    <li>Whatever the session opens shows here; a browser tool attached to 127.0.0.1:9222 drives this window.</li>
+    <li>Whatever the session opens shows here; a browser tool attached to 127.0.0.1:{{cdp}} drives this window.</li>
   </ol>
 </body></html>
-""";
+""").Replace("{{cdp}}", CdpPort.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>
@@ -2244,7 +2415,7 @@ attach to. The session ends when you close its windows.
         if (!File.Exists(sessionFile) || !PortAnswers(CdpPort)) return;
         using var session = JsonDocument.Parse(File.ReadAllText(sessionFile));
         int pid = session.RootElement.GetProperty("browserPid").GetInt32();
-        if (!RunTool("ps", new[] { "-o", "command=", "-p", pid.ToString() }, out _).Contains($"--remote-debugging-port={CdpPort}")) return;
+        if (!RunTool("ps", new[] { "-o", "command=", "-p", pid.ToString() }).Output.Contains($"--remote-debugging-port={CdpPort}")) return;
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
         using var targets = JsonDocument.Parse(http.GetStringAsync($"http://127.0.0.1:{CdpPort}/json/list").Result);
         foreach (var target in targets.RootElement.EnumerateArray())
@@ -2253,6 +2424,31 @@ attach to. The session ends when you close its windows.
         browser.Kill(true);
         browser.WaitForExit();
         Console.WriteLine($"[joint-launcher] closed the last session's browser (pid {pid}): its window was closed, but macOS keeps the app running.");
+    }
+
+    /// <summary>
+    /// True when the browser this tool's open session started still runs (the browserPid of its session.json, in the working folder or beside the
+    /// tool): the doctor run inside that session finds the DevTools port held by it, which is the session working, not a problem.
+    /// </summary>
+    static (bool Own, string? Problem) OwnSessionBrowser()
+    {
+        foreach (string root in new[] { Directory.GetCurrentDirectory(), ToolDir() })
+        {
+            string file = Path.Combine(root, ".joint", "joint-launcher", "session.json");
+            if (!File.Exists(file)) continue;
+            // JsonDocument has no TryParse: the parser's message is the answer, reported and not dropped (a missing file is no session, not a problem).
+            try
+            {
+                using JsonDocument session = JsonDocument.Parse(File.ReadAllText(file));
+                return (session.RootElement.ValueKind == JsonValueKind.Object && session.RootElement.TryGetProperty("browserPid", out var pid) && pid.TryGetInt32(out int browserPid)
+                    && (OperatingSystem.IsWindows()
+                        ? RunTool("tasklist", new[] { "/FI", $"PID eq {browserPid}", "/NH", "/FO", "CSV" }).Output.Split('\n').Any(line => line.Contains($"\"{browserPid}\"")
+                            && new[] { "chrome.exe", "msedge.exe", "chromium.exe" }.Any(image => line.StartsWith($"\"{image}\"", StringComparison.OrdinalIgnoreCase)))
+                        : RunTool("ps", new[] { "-o", "command=", "-p", browserPid.ToString() }).Output.Contains($"--remote-debugging-port={CdpPort}")), null);
+            }
+            catch (JsonException e) { return (false, $"the session file {file} is unreadable: {e.Message}; it names no browser"); }
+        }
+        return (false, null);
     }
 
     static bool PortAnswers(int port)

@@ -8,6 +8,8 @@
 import { createRequire } from 'node:module';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
+import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -55,7 +57,7 @@ AI cost bar (a strip at the bottom of every page, for the whole joint session):
 Selectors are Playwright selectors: CSS ("#email", "button.primary"), text ("text=Sign in"), role
 ("role=button[name='Sign in']"), label ("internal:label=\\"Email\\"i") or XPath ("xpath=//h1").
 Options:
-  --cdp <url>                   the browser's DevTools endpoint (default: $JOINT_CDP, else http://127.0.0.1:9222)
+  --cdp <url>                   the browser's DevTools endpoint (default: $JOINT_CDP, else http://127.0.0.1:$JOINT_CDP_PORT or 9222)
   --page <index>                the tab (from 'pages'); default: the newest tab
   --timeout <ms>                how long an action may wait for its element (default 10000)
   --settle <ms>                 how long to keep listening after the action (default 700)
@@ -69,7 +71,7 @@ Options:
 
 function parse(argv) {
   const positional = [];
-  const options = { cdp: process.env.JOINT_CDP || 'http://127.0.0.1:9222', page: null, timeout: 10000, settle: 700, expect: [], acceptDialog: null, allow: null, full: false };
+  const options = { cdp: process.env.JOINT_CDP || `http://127.0.0.1:${process.env.JOINT_CDP_PORT || 9222}`, page: null, timeout: 10000, settle: 700, expect: [], acceptDialog: null, allow: null, full: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const value = () => {
@@ -251,13 +253,16 @@ async function main() {
 // it never intercepts a click.
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COSTBAR_DIR = path.join(os.homedir(), '.joint-browser');
-const COSTBAR_FILE = path.join(COSTBAR_DIR, 'costbar.json');
-const COSTBAR_LOG = path.join(COSTBAR_DIR, 'costbar.log');
+// One daemon per DevTools port: the default browser (9222) keeps costbar.json and costbar.log (the standalone panel reads that name); another port (JOINT_CDP_PORT: a test run beside a joint
+// session) has a pair of its own. A daemon of one browser never answers "already running" for another, and `costbar stop` only ends the daemon of the browser it is pointed at.
+const cdpPortOf = (cdp) => { try { return new URL(cdp).port || '9222'; } catch { return '9222'; } };
+const costbarFileFor = (cdp) => path.join(COSTBAR_DIR, cdpPortOf(cdp) === '9222' ? 'costbar.json' : `costbar-${cdpPortOf(cdp)}.json`);
+const costbarLogFor = (cdp) => path.join(COSTBAR_DIR, cdpPortOf(cdp) === '9222' ? 'costbar.log' : `costbar-${cdpPortOf(cdp)}.log`);
 
 const COSTBAR_INJECT = `(() => {
   // A page holding an older strip gets this one in its place (the daemon injects again after an update).
-  if (window.top !== window || window.__jcCostLook === 3) return;
-  window.__jcCostLook = 3;
+  if (window.top !== window || window.__jcCostLook === 4) return;
+  window.__jcCostLook = 4;
   const old = document.getElementById('jc-costbar');
   if (old) old.remove();
   let host = null;
@@ -278,7 +283,7 @@ const COSTBAR_INJECT = `(() => {
       host.__c = root.querySelector('.c'); host.__n = root.querySelector('.n'); host.__bar = root.querySelector('.bar');
       document.documentElement.append(host);
     }
-    host.__n.textContent = s.tool || 'joint session';   // the tool that started the session (JOINT_TOOL), so its browser tells it apart
+    host.__n.textContent = (s.tool || 'joint session') + (s.folder ? ' : ' + s.folder : '');   // the tool that started the session (JOINT_TOOL) and the folder it runs in, so its browser tells it apart
     // The session panel sits over the bottom-right corner of the window: the text keeps clear of it (s.right px, from JOINT_PANEL_RIGHT).
     host.__bar.style.paddingRight = (14 + (s.right || 0)) + 'px';
     // Only text nodes: the group name is the user's own text.
@@ -300,32 +305,19 @@ function readJsonFile(file, fallback) {
 function alive(pid) {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
-function costbarRunning() {
-  const d = readJsonFile(COSTBAR_FILE, null);
+function costbarRunning(cdp) {
+  const d = readJsonFile(costbarFileFor(cdp), null);
   return d && alive(d.pid) ? d : null;
 }
 
-/** How far the bar's text keeps from the right edge so the session panel (bottom-right) does not cover it: JOINT_PANEL_RIGHT when a tool
- *  sets it, else read from the standalone panel's own settings (runJointPanelAST.json beside the panel, found as the cost reader is):
- *  PanelInset + the 28-unit square and its margin (36) when the corner is bottom-right, else 0. No panel program found: 0. */
+/** How far the bar's text keeps from the right edge so the session panel does not cover it. The panel tells the daemon itself: when it opens or
+ *  moves, and when it quits (0), it POSTs /offset?right=<px> to the daemon (the port and token are in costbar.json, header
+ *  X-Joint-Capture-Token). Until the panel has said anything, JOINT_PANEL_RIGHT when a tool sets it, else 0. */
+let pushedRight = null;
+const capRight = (n) => Math.max(0, Math.min(400, n));
 function panelRight() {
-  const cap = (n) => Math.max(0, Math.min(400, n));
-  if (process.env.JOINT_PANEL_RIGHT) return cap(parseInt(process.env.JOINT_PANEL_RIGHT, 10) || 0);
-  for (let dir of [process.cwd(), HERE]) {
-    for (let i = 0; i < 8; i++, dir = path.dirname(dir)) {
-      for (const sub of ['', 'csharp/ArshuPanel']) {
-        const folder = path.join(dir, sub);
-        let names = [];
-        try { names = fs.readdirSync(folder); } catch { continue; }
-        if (!names.some((n) => /^runJointPanelAST(\.cs|-.+)$/.test(n))) continue;
-        const settings = readJsonFile(path.join(folder, 'runJointPanelAST.json'), {});
-        const corner = typeof settings.PanelCorner === 'string' ? settings.PanelCorner : 'bottom-right';
-        const inset = Number.isInteger(settings.PanelInset) ? settings.PanelInset : 0;
-        return corner === 'bottom-right' ? cap(inset + 36) : 0;
-      }
-    }
-  }
-  return 0;
+  if (pushedRight !== null) return pushedRight;
+  return process.env.JOINT_PANEL_RIGHT ? capRight(parseInt(process.env.JOINT_PANEL_RIGHT, 10) || 0) : 0;
 }
 
 function findCostReader() {
@@ -351,14 +343,21 @@ function skillHarness() {
 /** How to run the cost reader: `dotnet run runJointCostAST.cs -- args` for the script, `<binary> --cost args` for a tool's NativeAOT
  *  binary, which carries the reader (the launcher puts either path in JOINT_COST_READER). The two ways to ship stay independent. */
 function costCommand(reader, args) {
+  // The standalone cost reader binary (runJointCostAST[.exe]) takes the arguments directly; only a tool binary carries it behind --cost.
+  if (/^runJointCostAST(\.exe)?$/i.test(path.basename(reader))) return { file: reader, args };
   if (!/\.cs$/i.test(reader)) return { file: reader, args: ['--cost', ...args] };
   // The tool's cost watcher runs this same script and holds its build output (dotnet's run cache is keyed by the script's
   // path; on Windows the running exe cannot be replaced), so every `dotnet run` of it fails while the watcher lives. The bar
   // reads from a copy of its own: another path, another build output.
   const copy = path.join(COSTBAR_DIR, 'reader', path.basename(reader));
-  fs.mkdirSync(path.dirname(copy), { recursive: true });
-  const source = fs.readFileSync(reader);
-  if (!fs.existsSync(copy) || !fs.readFileSync(copy).equals(source)) fs.writeFileSync(copy, source);
+  // A script with `#:include ../ArshuCore/X.cs` lines (the repository's AST reader) finds those files beside its copy at the same relative places.
+  const copyWithIncludes = (from, to) => {
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    const source = fs.readFileSync(from);
+    if (!fs.existsSync(to) || !fs.readFileSync(to).equals(source)) fs.writeFileSync(to, source);
+    for (const m of source.toString('utf8').matchAll(/^#:include\s+(\S+)\s*$/gm)) copyWithIncludes(path.resolve(path.dirname(from), m[1]), path.resolve(path.dirname(to), m[1]));
+  };
+  copyWithIncludes(reader, copy);
   return { file: 'dotnet', args: ['run', copy, '--', ...args] };
 }
 
@@ -399,8 +398,10 @@ async function costbarServe(options, loaded) {
   if (!context) throw new Error('the browser has no window to drive');
   let cost = null, busy = false;
 
-  const write = () => fs.writeFileSync(COSTBAR_FILE, JSON.stringify({ pid: process.pid, cdp: options.cdp, folder: process.cwd(), cost, at: new Date().toISOString() }, null, 2));
-  const apply = (page) => page.evaluate(COSTBAR_INJECT).then(() => page.evaluate((s) => window.__jcCostApply && window.__jcCostApply(s), cost && { ...cost, right: panelRight(), tool: process.env.JOINT_TOOL || '' })).catch(() => {});
+  const token = crypto.randomBytes(16).toString('hex');
+  let port = 0;
+  const write = () => fs.writeFileSync(costbarFileFor(options.cdp), JSON.stringify({ pid: process.pid, cdp: options.cdp, folder: process.cwd(), port, token, cost, at: new Date().toISOString() }, null, 2));
+  const apply = (page) => page.evaluate(COSTBAR_INJECT).then(() => page.evaluate((s) => window.__jcCostApply && window.__jcCostApply(s), cost && { ...cost, right: panelRight(), tool: process.env.JOINT_TOOL || '', folder: process.cwd() })).catch(() => {});
   const applyAll = () => Promise.all(context.pages().map(apply));
   await context.addInitScript({ content: COSTBAR_INJECT });   // later documents; the daemon pushes the state when they load
   const watch = (page) => page.on('domcontentloaded', () => apply(page));
@@ -416,8 +417,23 @@ async function costbarServe(options, loaded) {
     write();
     await applyAll();
   };
+  // The panel's command: POST /offset?right=<px> with the token, answered {"ok":true,"right":<px>}.
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url || '/', 'http://127.0.0.1');
+    const answer = (code, body) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(body)); };
+    req.resume();
+    if (req.headers['x-joint-capture-token'] !== token) return answer(403, { ok: false, message: 'wrong token' });
+    if (req.method !== 'POST' || url.pathname !== '/offset') return answer(404, { ok: false, message: 'unknown command' });
+    const right = Number(url.searchParams.get('right'));
+    if (!Number.isInteger(right)) return answer(400, { ok: false, message: 'right must be an integer' });
+    pushedRight = capRight(right);
+    applyAll();
+    answer(200, { ok: true, right: pushedRight });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  port = server.address().port;
   write();
-  const exit = () => { try { fs.unlinkSync(COSTBAR_FILE); } catch { /* gone */ } process.exit(0); };
+  const exit = () => { try { fs.unlinkSync(costbarFileFor(options.cdp)); } catch { /* gone */ } process.exit(0); };
   browser.on('disconnected', exit);
   process.on('SIGINT', exit);
   process.on('SIGTERM', exit);
@@ -428,7 +444,7 @@ async function costbarServe(options, loaded) {
 }
 
 async function costbarCommand(sub, args, options, loaded) {
-  const running = costbarRunning();
+  const running = costbarRunning(options.cdp);
   if (sub === 'status') {
     print(running ? { running: true, pid: running.pid, folder: running.folder, cost: running.cost, at: running.at } : { running: false });
     return running ? 0 : 1;
@@ -438,15 +454,15 @@ async function costbarCommand(sub, args, options, loaded) {
     if (!loaded) throw new Error('no Playwright: run "node browser.mjs setup" first');
     if (!(await cdpVersion(options.cdp))) throw new Error(`no browser answers on ${options.cdp}: open the joint session first`);
     fs.mkdirSync(COSTBAR_DIR, { recursive: true });
-    try { fs.unlinkSync(COSTBAR_FILE); } catch { /* none */ }
-    const log = fs.openSync(COSTBAR_LOG, 'w');
+    try { fs.unlinkSync(costbarFileFor(options.cdp)); } catch { /* none */ }
+    const log = fs.openSync(costbarLogFor(options.cdp), 'w');
     spawn(process.execPath, [fileURLToPath(import.meta.url), 'costbar', 'serve', '--cdp', options.cdp], { detached: true, stdio: ['ignore', log, log], windowsHide: true, cwd: process.cwd() }).unref();
     for (let i = 0; i < 80; i++) {   // up to 40 s: the first cost read runs dotnet
       await new Promise((r) => setTimeout(r, 500));
-      const d = costbarRunning();
+      const d = costbarRunning(options.cdp);
       if (d && d.cost) { print({ running: true, pid: d.pid, cost: d.cost }); return d.cost.error ? 2 : 0; }
     }
-    print({ running: false, error: 'the cost bar daemon did not come up', log: fs.readFileSync(COSTBAR_LOG, 'utf8').slice(-600) });
+    print({ running: false, error: 'the cost bar daemon did not come up', log: fs.readFileSync(costbarLogFor(options.cdp), 'utf8').slice(-600) });
     return 1;
   }
   if (sub === 'stop') {
@@ -456,7 +472,7 @@ async function costbarCommand(sub, args, options, loaded) {
       for (const page of browser.contexts()[0]?.pages() ?? []) await page.evaluate(() => window.__jcCostApply && window.__jcCostApply(null)).catch(() => {});
     } catch { /* browser gone */ }
     try { process.kill(running.pid); } catch { /* already gone */ }
-    try { fs.unlinkSync(COSTBAR_FILE); } catch { /* gone */ }
+    try { fs.unlinkSync(costbarFileFor(options.cdp)); } catch { /* gone */ }
     print({ running: false, stopped: running.pid });
     return 0;
   }

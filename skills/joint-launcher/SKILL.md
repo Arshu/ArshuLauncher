@@ -9,7 +9,7 @@ The user opened a joint session with the launcher (`{{launch}}`, run from this f
 terminal plus a shared browser whose DevTools protocol answers on http://127.0.0.1:9222. Any browser tool that can
 attach to a running Chromium over CDP (e.g. a Playwright MCP server started with `--cdp-endpoint
 http://127.0.0.1:9222`) acts on the window the user watches. The launcher records the session in
-`<local app data>/joint-launcher/session.json` (`cdp`, `harness`, `skill`). No skill was named, so ask what to do,
+`<working folder>/.joint/joint-launcher/session.json` (`cdp`, `harness`, `skill`). No skill was named, so ask what to do,
 then do it.
 
 ## 1. Ask
