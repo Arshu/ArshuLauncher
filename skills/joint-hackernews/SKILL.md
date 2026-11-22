@@ -42,14 +42,15 @@ This is a good-faith notice and not legal advice; the user is responsible for th
 ## 0. Ready
 
 **Never `cd` in a command of this skill.** Give `node` the absolute path of the script (`node "<this folder>/hn.mjs" start`).
-The AI cost in the dock is read from this session's transcript, and a session that changes folder (even into a
+The AI cost is the joint session's own cost bar at the very bottom of every page (joint-browser `costbar`, the one the plain tools show); the
+Hacker News bar sits just above it and shows no cost. The cost is read from this session's transcript, and a session that changes folder (even into a
 subfolder) is not counted: the line would show $0.00 for the whole session.
 
 1. `node <this folder>/../joint-browser/browser.mjs status` must name a `browser` (Node 20+, Playwright, the session's
    browser). If not, follow joint-browser's section 0 and ask the user to start the launcher.
 2. `node <this folder>/hn.mjs start`: the daemon (it stays attached, so the options survive every navigation).
    It reads the AI cost with `runJointCostAST.cs`; `status` shows `cost` (an `error` there is shown in the dock as
-   "AI cost: unavailable", never as a made-up number: tell the user the message).
+   "AI cost: unavailable" in the cost bar, never as a made-up number: tell the user the message).
 
 ## 1. First run: three questions, then browse
 
@@ -72,7 +73,7 @@ finer (karma threshold, watch-list, mute, alerts, groups, classifier, collapse d
 when the user asks, with `hn.mjs set <path> <value>` (`hn.mjs get` prints every option) or `hn.mjs group add`.
 
 Then `node hn.mjs open` and tell the user to browse. Options that need no Claude call cost nothing; classify, summarise
-and label cost tokens, shown at the bottom ("AI cost: session $x | group G $y"; `*` = an estimate).
+and label cost tokens, shown in the cost bar at the bottom ("AI cost: session $x | group G $y"; `*` = an estimate), under the Hacker News bar.
 
 ## 2. Browse
 

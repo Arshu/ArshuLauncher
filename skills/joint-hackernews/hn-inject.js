@@ -48,9 +48,9 @@
 
   // ---------------------------------------------------------------- CSS
   const CSS = `
-  #hn-foot{position:fixed;left:0;right:0;bottom:0;z-index:2147483646;display:flex;gap:12px;justify-content:space-between;align-items:center;
+  #hn-foot{position:fixed;left:0;right:0;bottom:var(--jc-bar-h,0px);z-index:2147483646;display:flex;gap:12px;justify-content:space-between;align-items:center;
     padding:5px 12px;font:12px/1.3 system-ui,sans-serif;background:var(--hn-bar,#ff6600);color:var(--hn-bar-fg,#000)}
-  #hn-foot .n{font-weight:700}#hn-foot .c{white-space:nowrap;font-weight:700;background:#1a0d00;color:#ffd9bd;padding:1px 8px;border-radius:8px}
+  #hn-foot .n{font-weight:700}
   html.hn-on body{padding-bottom:30px}
   #hn-tab{position:fixed;z-index:2147483645;font:12px system-ui,sans-serif;background:var(--hn-bar,#ff6600);color:var(--hn-bar-fg,#000);border:0;padding:6px 8px;cursor:pointer;border-radius:6px 0 0 6px}
   #hn-panel{position:fixed;z-index:2147483644;background:#26262a;color:#e6e6e6;font:12px/1.4 system-ui,sans-serif;overflow:auto;padding:10px;box-sizing:border-box;display:none;box-shadow:0 0 12px #0008}
@@ -62,14 +62,14 @@
   #hn-panel .chip{display:inline-block;margin:2px 4px 2px 0;padding:1px 8px;border-radius:10px;border:2px solid var(--c);cursor:pointer}
   #hn-panel .chip.on{background:var(--c);color:#fff}
   #hn-panel .free{color:#7bd88f}#hn-panel .paid{color:#ffb27a}#hn-panel .req{margin-top:8px;padding:4px 6px;background:#4a3a1a;border-radius:4px}
-  html.hn-pos-right #hn-tab{right:0;top:80px}html.hn-pos-right #hn-panel{right:0;top:0;bottom:30px;width:310px}
-  html.hn-pos-left #hn-tab{left:0;top:80px;border-radius:0 6px 6px 0}html.hn-pos-left #hn-panel{left:0;top:0;bottom:30px;width:310px}
+  html.hn-pos-right #hn-tab{right:0;top:80px}html.hn-pos-right #hn-panel{right:0;top:0;bottom:calc(30px + var(--jc-bar-h,0px));width:310px}
+  html.hn-pos-left #hn-tab{left:0;top:80px;border-radius:0 6px 6px 0}html.hn-pos-left #hn-panel{left:0;top:0;bottom:calc(30px + var(--jc-bar-h,0px));width:310px}
   html.hn-pos-top #hn-tab{top:0;right:20px;border-radius:0 0 6px 6px}html.hn-pos-top #hn-panel{left:0;right:0;top:0;max-height:45vh}
-  html.hn-pos-bottom #hn-tab{bottom:30px;right:20px;border-radius:6px 6px 0 0}html.hn-pos-bottom #hn-panel{left:0;right:0;bottom:30px;max-height:45vh}
+  html.hn-pos-bottom #hn-tab{bottom:calc(30px + var(--jc-bar-h,0px));right:20px;border-radius:6px 6px 0 0}html.hn-pos-bottom #hn-panel{left:0;right:0;bottom:calc(30px + var(--jc-bar-h,0px));max-height:45vh}
   html.hn-open #hn-panel{display:block}
   html.hn-open.hn-pos-right body{padding-right:310px}html.hn-open.hn-pos-left body{padding-left:310px}
-  @media (max-width:700px){#hn-panel{left:0!important;right:0!important;top:auto!important;bottom:30px!important;width:auto!important;max-height:55vh}
-    #hn-tab{top:auto!important;bottom:30px!important;right:8px!important;left:auto!important;border-radius:6px 6px 0 0!important}
+  @media (max-width:700px){#hn-panel{left:0!important;right:0!important;top:auto!important;bottom:calc(30px + var(--jc-bar-h,0px))!important;width:auto!important;max-height:55vh}
+    #hn-tab{top:auto!important;bottom:calc(30px + var(--jc-bar-h,0px))!important;right:8px!important;left:auto!important;border-radius:6px 6px 0 0!important}
     html.hn-open body{padding-left:0!important;padding-right:0!important}}
   .hn-badge{font-size:10px;padding:0 5px;margin-left:5px;border-radius:8px;white-space:nowrap}
   .hn-bk{background:#c9a227;color:#000}.hn-bw{background:#9b59d0;color:#fff}.hn-bf{background:#ff6600;color:#fff;font-weight:700}
@@ -423,18 +423,10 @@
   }
 
   // ---------------------------------------------------------------- chrome (foot + dock)
-  function costText() {
-    const c = S.cost;
-    if (!c) return { t: 'AI cost: measuring…', title: '' };
-    if (c.error) return { t: 'AI cost: unavailable', title: c.error };
-    const star = c.defaulted ? '*' : '';
-    return { t: 'AI cost  session $' + c.session.toFixed(2) + star + '  |  group ' + c.group + ' $' + c.groupUsd.toFixed(2) + star, title: (c.defaulted ? '* estimate: default price for ' + c.defaulted + '. ' : '') + 'The newest session of this folder, and every session of its session group ' + c.group + ' (a launch joins a group with --group); transcripts lag a little. Folder total $' + c.usd.toFixed(2) };
-  }
-
   function renderChrome(type) {
     let foot = $('#hn-foot');
-    if (!foot) { foot = el('div', { id: 'hn-foot' }, el('span', { class: 'n', text: NOTICE }), el('span', { class: 'c' })); document.body.append(foot); }
-    const ct = costText(), c = $('.c', foot); c.textContent = ct.t; c.title = ct.title;
+    if (!foot) { foot = el('div', { id: 'hn-foot' }, el('span', { class: 'n', text: NOTICE })); document.body.append(foot); }
+    // The AI cost is not drawn here: the joint session's own cost bar (joint-browser costbar) stays at the very bottom and this bar sits above it.
     // the waiting-requests hint is not in the footer any more: the dock and the summaries page (/joint-summaries) show the queue
     $('#hn-req', foot)?.remove();
     let tab = $('#hn-tab');

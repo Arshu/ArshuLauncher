@@ -29,7 +29,8 @@ attaches to the open window and never launches or closes a browser.
    `runJointCostAST.cs` (found from the project folder; `JOINT_COST_READER` names it elsewhere; it needs .NET). The strip
    ignores the pointer, so it never blocks a click, but it is in screenshots. "AI cost: unavailable (...)" is an error:
    tell the user the message; never state a number the bar does not show. `costbar status` says whether it runs and the
-   last cost; `costbar stop` removes it. The joint-hackernews skill draws its own bar and the strip steps aside there.
+   last cost; `costbar stop` removes it. The strip is on every page, the joint-hackernews pages too (its own bar sits above it),
+   and it leaves a gap of its own height under each page's content, so the last line is never behind it.
    **Session groups**: a launch is tracked in a session group, named with the launcher's `--group <name>` ("Default" when
    none is given). The bar's group total adds up every session of the current session's group, whatever launch started it,
    so several launches of one piece of work add up. `node <this folder>/browser.mjs costbar group` lists the groups with

@@ -246,8 +246,8 @@ async function main() {
 }
 
 // ---- costbar: the AI cost of this folder's harness session as a strip at the bottom of every page of the shared
-// browser, so a joint session always shows what it spends (the joint-hackernews skill draws its own bar and this one
-// steps aside on its pages). `costbar start` runs a daemon that stays attached to the browser, injects the strip into
+// browser, so a joint session always shows what it spends (a skill that draws a bar of its own, like joint-hackernews,
+// puts it above this one: the strip stays on every page). `costbar start` runs a daemon that stays attached to the browser, injects the strip into
 // every document (it survives navigation, including the user's own clicks) and re-reads the cost with the repository's
 // cost reader (runJointCostAST.cs). An error is shown as "unavailable", never as a number. The strip ignores the pointer, so
 // it never intercepts a click.
@@ -261,14 +261,21 @@ const costbarLogFor = (cdp) => path.join(COSTBAR_DIR, cdpPortOf(cdp) === '9222' 
 
 const COSTBAR_INJECT = `(() => {
   // A page holding an older strip gets this one in its place (the daemon injects again after an update).
-  if (window.top !== window || window.__jcCostLook === 4) return;
-  window.__jcCostLook = 4;
+  if (window.top !== window || window.__jcCostLook === 5) return;
+  window.__jcCostLook = 5;
   const old = document.getElementById('jc-costbar');
   if (old) old.remove();
   let host = null;
-  const clear = () => { if (host) { host.remove(); host = null; } };
+  // The strip is fixed over the bottom of the window: the page gets a gap of the strip's height under its content (html padding, and
+  // --jc-bar-h for a skill's own bar to sit above the strip), so the last line of a page is never under the strip.
+  const gap = (px) => {
+    const st = document.documentElement.style;
+    if (px > 0) { st.setProperty('--jc-bar-h', px + 'px'); st.setProperty('padding-bottom', px + 'px', 'important'); }
+    else { st.removeProperty('--jc-bar-h'); st.removeProperty('padding-bottom'); }
+  };
+  const clear = () => { if (host) { host.remove(); host = null; } gap(0); };
   window.__jcCostApply = (s) => {
-    if (!s || document.getElementById('hn-foot')) return clear();
+    if (!s) return clear();
     if (!document.documentElement) return;
     if (!host || !host.isConnected) {
       host = document.createElement('div');
@@ -282,6 +289,7 @@ const COSTBAR_INJECT = `(() => {
         '</style><div class="bar"><span class="n"></span><span class="c"></span></div>';
       host.__c = root.querySelector('.c'); host.__n = root.querySelector('.n'); host.__bar = root.querySelector('.bar');
       document.documentElement.append(host);
+      new ResizeObserver(() => gap(Math.ceil(host.__bar.getBoundingClientRect().height))).observe(host.__bar);
     }
     host.__n.textContent = (s.tool || 'joint session') + (s.folder ? ' : ' + s.folder : '');   // the tool that started the session (JOINT_TOOL) and the folder it runs in, so its browser tells it apart
     // The session panel sits over the bottom-right corner of the window: the text keeps clear of it (s.right px, from JOINT_PANEL_RIGHT).
@@ -296,6 +304,7 @@ const COSTBAR_INJECT = `(() => {
       parts.push(part('l', 'Session'), priced(s.session), part('sep', '|'), part('l', 'Group ' + s.group), priced(s.groupUsd));
     }
     host.__c.replaceChildren(...parts);
+    gap(Math.ceil(host.__bar.getBoundingClientRect().height));
   };
 })()`;
 

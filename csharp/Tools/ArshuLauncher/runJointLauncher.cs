@@ -879,7 +879,7 @@ class RunJointLauncher
         // A run that starts no harness does not create the file.
         if (defaultsChanged || (!skipHarness && !File.Exists(defaultsFile)))
         {
-            WriteDefaults(defaultsFile, defaults with { DefaultSkill = skillName, DefaultPosition = position, DefaultRatio = ratio });
+            WriteDefaults(defaultsFile, defaults with { DefaultSkill = "", DefaultPosition = position, DefaultRatio = ratio });
             Console.WriteLine($"[joint-launcher] defaults saved to {defaultsFile}: skill {(skillName.Length == 0 ? "(none: " + ChooserSkill + " asks)" : skillName)}, position {position}, ratio {ratio}");
         }
 
@@ -2050,6 +2050,24 @@ Answer 'refused no new window appeared'
         return Path.Combine(tool, SkillsFolderName);
     }
 
+    /// <summary>
+    /// The skills a launch can start: those named in Skills plus every folder of the skills folder that holds a SKILL.md
+    /// (&lt;name&gt;/SKILL.md) and is neither a skill the tool carries nor already in Skills, so a skill put there needs no
+    /// entry. A name is never listed twice: an entry in Skills wins over the folder.
+    /// </summary>
+    static IReadOnlyDictionary<string, string> KnownSkills(JointDefaults defaults)
+    {
+        var known = new Dictionary<string, string>(defaults.Skills);
+        string folder = FindSkillsFolder();
+        if (Directory.Exists(folder))
+            foreach (string dir in Directory.GetDirectories(folder).OrderBy(d => d, StringComparer.Ordinal))
+            {
+                string name = Path.GetFileName(dir), file = Path.Combine(dir, "SKILL.md");
+                if (Regex.IsMatch(name, "^[a-z0-9]+(-[a-z0-9]+)*\\z") && !IsCarriedSkill(name) && !known.ContainsKey(name) && File.Exists(file)) known[name] = file;
+            }
+        return known;
+    }
+
     /// <summary>Whether the skills folder holds every file of the skill.</summary>
     static bool FolderHolds(string skillsFolder, FolderSkill skill) => skill.Files.All(f => File.Exists(Path.Combine(skillsFolder, skill.Name, f)));
 
@@ -2113,12 +2131,12 @@ Answer 'refused no new window appeared'
     /// </summary>
     static string? SkillFile(string workspaceDir, Harness harness, JointDefaults defaults, string name) =>
         IsCarriedSkill(name) ? HarnessSkillFile(workspaceDir, harness, name)
-        : defaults.Skills.TryGetValue(name, out var path) ? Path.GetFullPath(path, workspaceDir) : null;
+        : KnownSkills(defaults).TryGetValue(name, out var path) ? Path.GetFullPath(path, workspaceDir) : null;
 
     /// <summary>Why a start skill is refused when it is neither embedded nor configured in Skills (no closing period).</summary>
     static string UnknownSkill(string name, string defaultsFile, JointDefaults defaults) =>
         $"skill '{name}' is neither embedded nor in the skills folder ({CarriedSkillNames()}) nor configured in Skills of {defaultsFile}" +
-        $"{(defaults.Skills.Count == 0 ? "" : $" ({string.Join(", ", defaults.Skills.Keys)})")}";
+        $"{(KnownSkills(defaults).Count == 0 ? "" : $" ({string.Join(", ", KnownSkills(defaults).Keys)})")}";
 
     /// <summary>
     /// The harness's first message: the skill by the harness's own command (claude /name, codex $name, pi /skill:name)
@@ -2213,7 +2231,7 @@ is needed; runJointLauncher.json is created there on the first session.
                          the skills folder beside the launcher or above it, joint-launcher-install and joint-launcher-doctor are embedded;
                          all are written to the harness's skills folder
                          (.claude/skills, .agents/skills for codex and pi) when missing, never over a copy already there;
-                         other skills are named with their SKILL.md path in Skills of runJointLauncher.json.
+                         other skills are found as <name>/SKILL.md in the skills folder without an entry, or named with their SKILL.md path in Skills of runJointLauncher.json (an entry wins over the folder).
   --skillargs "<args>"   the skill's own arguments, e.g. --skill my-review --skillargs "login page".
                          Letters, digits, spaces and - _ , . / = : only (it is typed into the terminal's command line).
   --group <name>         the session group this launch is tracked in (default: Default; for this run only, never saved).
