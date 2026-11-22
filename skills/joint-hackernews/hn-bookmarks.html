@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hacker News bookmarks</title>
+<!-- Served by the joint-hackernews daemon at https://news.ycombinator.com/joint-bookmarks (hn.mjs answers that one URL locally; nothing is sent to HN).
+     It reads the local bookmarks file through window.__hnBridge, the same door the dock uses, so a change here is a change in the file. -->
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6ef; --fg: #222; --mute: #777; --line: #d9d9d0; --accent: #ff6600; --card: #fff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1b; --fg: #ddd; --mute: #999; --line: #3a3a3a; --card: #242424; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 Verdana, Geneva, sans-serif; }
+  header { background: var(--accent); color: #000; padding: 8px 16px; font-weight: bold; }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 16px 40px; }
+  a { color: inherit; } a:hover { color: var(--accent); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
+  .bar input, .bar select, .row input, .row select, button { font: inherit; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  #q { flex: 1 1 260px; min-width: 160px; }
+  button { cursor: pointer; } button:disabled { opacity: .4; cursor: default; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin: 6px 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; }
+  .row .t { font-weight: bold; overflow-wrap: anywhere; }
+  .meta { color: var(--mute); font-size: 12px; }
+  .badge { background: var(--accent); color: #000; border-radius: 3px; padding: 0 5px; font-size: 11px; margin-right: 4px; }
+  .edit { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+  .edit input { flex: 1 1 180px; font-size: 12px; }
+  #pager { display: flex; gap: 8px; align-items: center; justify-content: center; margin: 14px 0; }
+  #empty { color: var(--mute); padding: 24px 0; text-align: center; }
+  #err { color: #e03a2f; }
+</style>
+</head>
+<body>
+<header>Hacker News bookmarks <span class="meta" style="color:#000;font-weight:normal">(local file; nothing here is written to HN)</span></header>
+<main>
+  <div class="bar">
+    <input id="q" type="search" placeholder="search title, note, site, user, tag">
+    <select id="g" title="group"><option value="">All groups</option></select>
+    <select id="tg" title="tag"><option value="">All tags</option></select>
+    <select id="kind" title="what"><option value="">Stories and comments</option><option value="story">Stories</option><option value="comment">Comments</option></select>
+    <label class="meta">since <input id="since" type="date"></label>
+    <select id="size" title="per page"><option>10</option><option selected>25</option><option>50</option></select>
+    <button id="clear" type="button">Clear filters</button>
+  </div>
+  <div id="count" class="meta" aria-live="polite"></div>
+  <div id="err"></div>
+  <div id="list"></div>
+  <div id="empty" hidden></div>
+  <div id="pager"><button id="prev" type="button">‹ Previous</button><span id="pos" class="meta"></span><button id="next" type="button">Next ›</button></div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) { if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else if (v != null && v !== false) e.setAttribute(k, v === true ? '' : String(v)); }
+    for (const c of kids) if (c != null) e.append(c);
+    return e;
+  };
+  let B = {}, groups = [], page = 0;
+  const bridge = (m) => window.__hnBridge ? window.__hnBridge(m) : Promise.reject(new Error('this page only works inside the joint-hackernews browser (no bridge)'));
+  const flat = () => {
+    const out = [];
+    for (const g of Object.keys(B)) for (const d of Object.keys(B[g])) for (const e of B[g][d]) out.push({ e, g, d });
+    return out.sort((a, b) => (b.e.savedAt || b.d).localeCompare(a.e.savedAt || a.d));       // newest saved first
+  };
+  const haystack = ({ e, g }) => [e.title, e.note, e.domain, e.user, g, ...(e.tags || [])].join(' ').toLowerCase();
+  const filtered = () => {
+    const q = $('#q').value.trim().toLowerCase(), g = $('#g').value, tg = $('#tg').value, kind = $('#kind').value, since = $('#since').value;
+    return flat().filter((x) => (!q || q.split(/\s+/).every((w) => haystack(x).includes(w))) && (!g || x.g === g) && (!tg || (x.e.tags || []).includes(tg)) && (!kind || x.e.type === kind) && (!since || x.d >= since));
+  };
+  const fillSelect = (sel, first, values) => {
+    const keep = sel.value;
+    sel.replaceChildren(el('option', { value: '', text: first }), ...values.map((v) => el('option', { value: v, text: v })));
+    sel.value = values.includes(keep) ? keep : '';
+  };
+  const render = () => {
+    const all = flat();
+    fillSelect($('#g'), 'All groups', [...new Set([...Object.keys(B)])].sort());
+    fillSelect($('#tg'), 'All tags', [...new Set(all.flatMap((x) => x.e.tags || []))].sort());
+    const rows = filtered(), size = Number($('#size').value), pages = Math.max(1, Math.ceil(rows.length / size));
+    page = Math.min(page, pages - 1);
+    const known = [...new Set([...groups, 'Others', ...Object.keys(B)])];
+    const list = $('#list');
+    list.replaceChildren(...rows.slice(page * size, page * size + size).map(({ e, g, d }) => el('div', { class: 'row', 'data-id': e.id, 'data-type': e.type },
+      el('div', {},
+        el('div', { class: 't' }, el('a', { href: e.url, text: (e.type === 'comment' ? '💬 ' : '') + (e.title || e.url) })),
+        el('div', { class: 'meta' }, el('span', { class: 'badge', text: g }), [d, e.domain, e.user, e.points ? e.points + ' pts' : '', e.comments ? e.comments + ' comments' : ''].filter(Boolean).join(' · '), ' · ',
+          el('a', { href: '/item?id=' + e.id, text: 'discuss' }))),
+      el('div', {},
+        el('select', { 'data-move': '1', title: 'move to another group' }, ...[...new Set([...known, g])].map((x) => el('option', { value: x, text: x, selected: x === g }))), ' ',
+        el('button', { 'data-del': '1', title: 'remove this bookmark', text: '×' })),
+      el('div', { class: 'edit' },
+        el('input', { type: 'text', 'data-note': '1', value: e.note || '', placeholder: 'note' }),
+        el('input', { type: 'text', 'data-tags': '1', value: (e.tags || []).join(', '), placeholder: 'tags, comma separated' })))));
+    $('#count').textContent = rows.length === all.length ? all.length + ' bookmarks' : rows.length + ' of ' + all.length + ' bookmarks match';
+    $('#empty').hidden = rows.length > 0;
+    $('#empty').textContent = all.length ? 'Nothing matches these filters.' : 'No bookmarks yet. Star a story (☆) or a comment on Hacker News to keep it here.';
+    $('#pos').textContent = 'page ' + (page + 1) + ' of ' + pages;
+    $('#prev').disabled = page === 0; $('#next').disabled = page >= pages - 1;
+    $('#pager').hidden = rows.length <= size;
+  };
+  const edit = async (row, msg) => {
+    try { B = await bridge({ type: 'bookmark', kind: row.dataset.type, id: row.dataset.id, ...msg }); $('#err').textContent = ''; render(); }
+    catch (err) { $('#err').textContent = String(err.message || err); }
+  };
+  const again = () => { page = 0; render(); };
+  for (const id of ['#q', '#g', '#tg', '#kind', '#since', '#size']) $(id).addEventListener(id === '#q' ? 'input' : 'change', again);
+  $('#clear').addEventListener('click', () => { $('#q').value = ''; $('#g').value = ''; $('#tg').value = ''; $('#kind').value = ''; $('#since').value = ''; again(); });
+  $('#prev').addEventListener('click', () => { page--; render(); window.scrollTo(0, 0); });
+  $('#next').addEventListener('click', () => { page++; render(); window.scrollTo(0, 0); });
+  $('#list').addEventListener('click', (ev) => { const row = ev.target.closest('.row'); if (row && ev.target.closest('[data-del]')) edit(row, { action: 'remove' }); });
+  $('#list').addEventListener('change', (ev) => {
+    const row = ev.target.closest('.row'), t = ev.target; if (!row) return;
+    if (t.matches('[data-note]')) edit(row, { action: 'note', note: t.value });
+    else if (t.matches('[data-tags]')) edit(row, { action: 'tags', tags: t.value });
+    else if (t.matches('[data-move]')) edit(row, { action: 'move', group: t.value });
+  });
+  bridge({ type: 'hello' }).then((s) => { B = s.bookmarks || {}; groups = ((s.options && s.options.list && s.options.list.groups) || []).map((g) => g.name); render(); },
+    (err) => { $('#err').textContent = String(err.message || err); $('#empty').hidden = false; $('#empty').textContent = ''; });
+})();
+</script>
+</body>
+</html>

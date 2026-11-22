@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hacker News summaries queue</title>
+<!-- Served by the joint-hackernews daemon at https://news.ycombinator.com/joint-summaries (hn.mjs answers that one URL locally; nothing is sent to HN).
+     It shows the persistent request queue (requests.json) and the results Claude annotated, through window.__hnBridge, the same door the dock uses.
+     Phase 1: the page only lists and tidies the queue; Claude processes it when the user says "handle the HN requests". -->
+<style>
+  :root { color-scheme: light dark; --bg: #f6f6ef; --fg: #222; --mute: #777; --line: #d9d9d0; --accent: #ff6600; --card: #fff; --ok: #1a7f37; --bad: #e03a2f; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1b1b1b; --fg: #ddd; --mute: #999; --line: #3a3a3a; --card: #242424; --ok: #3fb950; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 Verdana, Geneva, sans-serif; }
+  header { background: var(--accent); color: #000; padding: 8px 16px; font-weight: bold; }
+  main { max-width: 980px; margin: 0 auto; padding: 12px 16px 40px; }
+  a { color: inherit; } a:hover { color: var(--accent); }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
+  .bar select, button { font: inherit; background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  button { cursor: pointer; }
+  .hint { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; padding: 6px 10px; margin: 8px 0; }
+  .row { background: var(--card); border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; margin: 6px 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; }
+  .row .t { font-weight: bold; overflow-wrap: anywhere; }
+  .meta { color: var(--mute); font-size: 12px; }
+  .badge { border-radius: 3px; padding: 0 5px; font-size: 11px; margin-right: 4px; background: var(--accent); color: #000; }
+  .badge.done { background: var(--ok); color: #fff; } .badge.failed { background: var(--bad); color: #fff; } .badge.processing { background: #b8860b; color: #fff; }
+  .res { grid-column: 1 / -1; border-top: 1px dashed var(--line); padding-top: 4px; overflow-wrap: anywhere; }
+  .res ul { margin: 4px 0 0 18px; padding: 0; }
+  #empty { color: var(--mute); padding: 24px 0; text-align: center; }
+  #err { color: var(--bad); }
+</style>
+</head>
+<body>
+<header>Hacker News summaries queue <span class="meta" style="color:#000;font-weight:normal">(local file; nothing here is written to HN)</span></header>
+<main>
+  <div class="hint">Click 📖 on a story or <b>Summarise</b> on a thread to queue it here. To process the queue, tell Claude: <b>"handle the HN requests"</b>. The result appears here and on the page.</div>
+  <div class="bar">
+    <select id="st" title="status"><option value="">All</option><option value="waiting">Waiting</option><option value="done">Done</option><option value="failed">Failed</option></select>
+    <button id="cleardone" type="button">Clear finished</button>
+    <span id="count" class="meta" aria-live="polite"></span>
+  </div>
+  <div id="err"></div>
+  <div id="list"></div>
+  <div id="empty" hidden></div>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (s) => document.querySelector(s);
+  const el = (tag, attrs = {}, ...kids) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) { if (k === 'class') e.className = v; else if (k === 'text') e.textContent = v; else if (v != null && v !== false) e.setAttribute(k, v === true ? '' : String(v)); }
+    for (const c of kids) if (c != null) e.append(c);
+    return e;
+  };
+  let Q = [], A = {};
+  const bridge = (m) => window.__hnBridge ? window.__hnBridge(m) : Promise.reject(new Error('this page only works inside the joint-hackernews browser (no bridge)'));
+  const KIND = { article: '📖 Article', summary: '🧵 Thread summary', labels: '🏷 Comment labels', classify: '🗂 Classify stories', picks: '⭐ Picks' };
+  const itemId = (r) => r.id || ((/[?&]id=(\d+)/.exec(r.url || '') || [])[1] || '');
+  const result = (r) => {
+    if (r.status === 'failed') return el('div', { class: 'res' }, 'Failed: ' + (r.error || 'no reason given'));
+    if (r.status !== 'done') return null;
+    const id = itemId(r);
+    if (r.kind === 'article' && A.articles && A.articles[id]) return el('div', { class: 'res' }, (A.articles[id].minutes ? A.articles[id].minutes + ' min read. ' : '') + A.articles[id].tldr);
+    if (r.kind === 'summary' && A.summaries && A.summaries[id]) {
+      const s = A.summaries[id];
+      return el('div', { class: 'res' }, s.overview, s.positions && s.positions.length ? el('ul', {}, ...s.positions.map((p) => el('li', {}, el('b', { text: p.title + ': ' }), p.text))) : null,
+        s.disagreement ? el('div', { class: 'meta', text: 'Disagreement: ' + s.disagreement }) : null);
+    }
+    return el('div', { class: 'res meta', text: 'Done; the result is on the Hacker News page.' });
+  };
+  const render = () => {
+    const f = $('#st').value;
+    const rows = Q.slice().reverse().filter((r) => !f || (f === 'waiting' ? r.status === 'queued' || r.status === 'processing' : r.status === f));
+    $('#list').replaceChildren(...rows.map((r) => {
+      const id = itemId(r), link = r.kind === 'article' ? '/item?id=' + id : (r.url || '/');
+      return el('div', { class: 'row', 'data-rid': r.rid },
+        el('div', {},
+          el('div', { class: 't' }, el('a', { href: link, text: r.title || (KIND[r.kind] || r.kind) + (id ? ' #' + id : '') })),
+          el('div', { class: 'meta' }, el('span', { class: 'badge ' + r.status, text: r.status === 'queued' ? 'waiting' : r.status }), (KIND[r.kind] || r.kind) + ' · queued ' + String(r.at || '').slice(0, 16).replace('T', ' '))),
+        el('div', {}, r.status === 'failed' || r.status === 'processing' ? el('button', { 'data-requeue': '1', title: 'put it back in the queue', text: '↻' }) : null, ' ', el('button', { 'data-del': '1', title: 'remove from the queue', text: '×' })),
+        result(r));
+    }));
+    const waiting = Q.filter((r) => r.status === 'queued' || r.status === 'processing').length;
+    $('#count').textContent = Q.length + ' in the queue, ' + waiting + ' waiting';
+    $('#empty').hidden = rows.length > 0;
+    $('#empty').textContent = Q.length ? 'Nothing matches this filter.' : 'The queue is empty. Click 📖 on a story or Summarise on a thread.';
+  };
+  const act = async (msg) => {
+    try { const r = await bridge({ type: 'queue', ...msg }); Q = r.queue || []; A = r.annotations || A; $('#err').textContent = ''; render(); }
+    catch (err) { $('#err').textContent = String(err.message || err); }
+  };
+  $('#st').addEventListener('change', render);
+  $('#cleardone').addEventListener('click', () => act({ action: 'clearDone' }));
+  $('#list').addEventListener('click', (ev) => {
+    const row = ev.target.closest('.row'); if (!row) return;
+    if (ev.target.closest('[data-del]')) act({ action: 'remove', rid: row.dataset.rid });
+    else if (ev.target.closest('[data-requeue]')) act({ action: 'requeue', rid: row.dataset.rid });
+  });
+  bridge({ type: 'hello' }).then((s) => { Q = s.queue || []; A = s.annotations || {}; render(); },
+    (err) => { $('#err').textContent = String(err.message || err); });
+  setInterval(() => bridge({ type: 'hello' }).then((s) => { Q = s.queue || []; A = s.annotations || {}; render(); }, () => {}), 5000);   // follow Claude's work without a reload
+})();
+</script>
+</body>
+</html>

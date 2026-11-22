@@ -6,6 +6,7 @@
 (() => {
   'use strict';
   if (location.hostname !== 'news.ycombinator.com' || window.__hnLoaded) return;
+  if (location.pathname === '/joint-bookmarks' || location.pathname === '/joint-summaries') return;   // the daemon's own bookmarks page (hn-bookmarks.html), not an HN page: no dock, no annotations
   window.__hnLoaded = true;
 
   const LIST_PATHS = new Set(['/', '/news', '/newest', '/front', '/ask', '/show', '/jobs', '/from', '/active', '/best', '/shownew', '/noobstories', '/classic', '/over']);
@@ -169,41 +170,32 @@
     return { title: user + ': ' + text.slice(0, 120), url: location.origin + '/item?id=' + id, domain: '', user, points: 0, comments: 0, postedAt: (($('.age', r)?.title || '').split(' ')[0] || '') + 'Z', group: itemGroupName() };
   }
   function bookmarksBlock() {
-    const B = S.bookmarks || {}, q = (sessionStorage.getItem('hn-bq') || '').toLowerCase();
+    // the dock keeps only the latest few (a long list would bury the rest of the dock); everything else, with paging, search and filters, is on the bookmarks page
+    const B = S.bookmarks || {}, LATEST = 5;
     const known = [...S.options.list.groups.map((g) => g.name), 'Others'];
-    const rank = (g) => (known.indexOf(g) < 0 ? 99 : known.indexOf(g));
+    const all = [];
+    for (const g of Object.keys(B)) for (const d of Object.keys(B[g])) for (const e of B[g][d]) all.push({ e, g, d });
+    all.sort((a, b) => (b.e.savedAt || b.d).localeCompare(a.e.savedAt || a.d));
+    const total = all.length;
     const body = el('div', { class: 'bm' });
-    let n = 0, total = 0;
-    for (const g of Object.keys(B).sort((a, b) => rank(a) - rank(b))) {
-      const gEl = el('div', {}, el('b', { text: g }));
-      let count = 0;
-      for (const d of Object.keys(B[g]).sort().reverse()) {
-        const items = B[g][d];
-        total += items.length;
-        const shown = items.filter((e) => !q || (e.title + ' ' + e.note + ' ' + e.domain + ' ' + e.user + ' ' + (e.tags || []).join(' ')).toLowerCase().includes(q));
-        if (!shown.length) continue;
-        gEl.append(el('div', { class: 'bd', text: d }));
-        for (const e of shown) {
-          count++; n++;
-          const move = el('select', { 'data-bmove': '1', 'data-bt': e.type, 'data-bid': e.id, title: 'move to another group' }, ...[...new Set([...known, g])].map((x) => el('option', { value: x, text: x, selected: x === g })));
-          gEl.append(el('div', { class: 'be' },
-            el('a', { href: e.url, text: (e.type === 'comment' ? '💬 ' : '') + (e.title || e.url) }), ' ',
-            el('a', { href: '/item?id=' + e.id, text: 'discuss' }),
-            el('span', { class: 'bm-meta', text: ' ' + [e.domain, e.user, e.points ? e.points + ' pts' : ''].filter(Boolean).join(' · ') }),
-            move, el('button', { 'data-bdel': '1', 'data-bt': e.type, 'data-bid': e.id, title: 'remove', text: '×' }),
-            el('input', { type: 'text', 'data-bnote': '1', 'data-bt': e.type, 'data-bid': e.id, value: e.note || '', placeholder: 'note' }),
-            el('input', { type: 'text', 'data-btags': '1', 'data-bt': e.type, 'data-bid': e.id, value: (e.tags || []).join(', '), placeholder: 'tags, comma separated' })));
-        }
-      }
-      if (count) body.append(gEl);
+    for (const { e, g, d } of all.slice(0, LATEST)) {
+      const move = el('select', { 'data-bmove': '1', 'data-bt': e.type, 'data-bid': e.id, title: 'move to another group' }, ...[...new Set([...known, g])].map((x) => el('option', { value: x, text: x, selected: x === g })));
+      body.append(el('div', { class: 'be' },
+        el('a', { href: e.url, text: (e.type === 'comment' ? '💬 ' : '') + (e.title || e.url) }), ' ',
+        el('a', { href: '/item?id=' + e.id, text: 'discuss' }),
+        el('span', { class: 'bm-meta', text: ' ' + [d, e.domain, e.user, e.points ? e.points + ' pts' : ''].filter(Boolean).join(' · ') }),
+        move, el('button', { 'data-bdel': '1', 'data-bt': e.type, 'data-bid': e.id, title: 'remove', text: '×' }),
+        el('input', { type: 'text', 'data-bnote': '1', 'data-bt': e.type, 'data-bid': e.id, value: e.note || '', placeholder: 'note' }),
+        el('input', { type: 'text', 'data-btags': '1', 'data-bt': e.type, 'data-bid': e.id, value: (e.tags || []).join(', '), placeholder: 'tags, comma separated' })));
     }
-    if (!n) body.append(el('div', { class: 'bm-meta', text: total ? 'nothing matches' : 'Star a story (☆) or a comment to keep it here.' }));
+    if (!total) body.append(el('div', { class: 'bm-meta', text: 'Star a story (☆) or a comment to keep it here.' }));
     return [
       el('h4', { text: 'Bookmarks (' + total + ')' }),
-      el('input', { type: 'text', id: 'hn-bsearch', placeholder: 'search title, note, site, user', value: sessionStorage.getItem('hn-bq') || '' }),
+      total > LATEST ? el('div', { class: 'bm-meta', text: 'The latest ' + LATEST + ' of ' + total + '.' }) : null,
       body,
+      total ? el('div', {}, el('a', { id: 'hn-allbm', href: '/joint-bookmarks', target: '_blank', text: total > LATEST ? 'All ' + total + ' bookmarks: search, filter, page →' : 'Open the bookmarks page →' })) : null,
       el('div', {}, el('button', { 'data-bmd': '1', text: 'Copy as Markdown' }), el('span', { class: 'bm-meta', text: ' a local file; HN is never written to' })),
-    ];
+    ].filter(Boolean);
   }
   function readEstimate(type) {
     const c = S.options.claude;
@@ -364,6 +356,7 @@
     if (headLine && itemId) headLine.append(starEl('story', itemId));
     const artI = (S.annotations.articles || {})[itemId];
     if (headLine && itemId && $('.fatitem .sitestr')) headLine.append(artI ? el('span', { class: 'hn-badge hn-art', text: '📖 ' + artI.minutes + ' min', title: artI.tldr })
+      : (S.queuedArticles || []).includes(itemId) ? el('span', { class: 'hn-badge hn-art hn-queued', text: '⏳ queued', title: 'asked: tell Claude "handle the HN requests" and the summary appears here' })
       : el('span', { class: 'hn-badge hn-art', 'data-article': itemId, text: '📖', title: 'ask Claude to summarise the linked article (≈ ' + kfmt(ARTICLE_TOK[S.options.claude.budget] || 1500) + ' tokens)' }));
     const mutedUsers = (((S.options.list || {}).mute || {}).users || []).map((x) => x.toLowerCase());
     for (const r of rows) {
@@ -415,6 +408,15 @@
       if (sum.disagreement) box.append(el('div', {}, el('b', { text: 'Where they disagree: ' }), sum.disagreement));
       if ((sum.best || []).length) { const d = el('div', {}, el('b', { text: 'Worth reading: ' })); for (const id of sum.best) d.append(el('a', { class: 'hn-goto', 'data-id': id, text: ($(USER, document.getElementById(id) || document.body)?.textContent || id) + ' ' })); box.append(d); }
       box.append(el('div', { class: 'm', text: 'Written by Claude from ' + sum.covered + ' of ' + sum.total + ' comments at ' + (sum.ts || '') + '. It can be wrong: check the comments it cites.' }));
+      // stale check: HN's own "N comments" count now against the total the summary was written from
+      const cl = [...document.querySelectorAll('.subline a, .subtext a')].find((a) => /\bcomments?\b/.test(a.textContent));
+      const now = cl ? parseInt(cl.textContent, 10) || 0 : document.querySelectorAll('tr.comtr').length;
+      const grown = now - (Number(sum.total) || 0);
+      if (grown >= 5 && grown >= (Number(sum.total) || 0) * 0.1) {
+        const queued = (S.queue || []).some((r) => r.kind === 'summary' && (r.status === 'queued' || r.status === 'processing') && String(r.url).includes('id=' + itemId));
+        box.append(el('div', { class: 'm hn-stale', id: 'hn-stale' }, '⚠ ' + grown + ' new comment(s) since this summary (' + now + ' now). ',
+          queued ? el('span', { text: '⏳ refresh queued: tell Claude "handle the HN requests"' }) : el('button', { 'data-ask': 'summary', text: 'Refresh summary' })));
+      }
       const tree = $('table.comment-tree') || $('tr.comtr')?.closest('table');
       if (tree) tree.parentNode.insertBefore(box, tree);
     }
@@ -433,9 +435,8 @@
     let foot = $('#hn-foot');
     if (!foot) { foot = el('div', { id: 'hn-foot' }, el('span', { class: 'n', text: NOTICE }), el('span', { class: 'c' })); document.body.append(foot); }
     const ct = costText(), c = $('.c', foot); c.textContent = ct.t; c.title = ct.title;
-    let rq = $('#hn-req', foot);
-    if (!rq) { rq = el('span', { id: 'hn-req', class: 'n' }); foot.insertBefore(rq, $('.c', foot)); }
-    rq.textContent = S.requests > 0 ? S.requests + ' request(s) for Claude waiting: tell Claude "handle the HN requests"' : '';
+    // the waiting-requests hint is not in the footer any more: the dock and the summaries page (/joint-summaries) show the queue
+    $('#hn-req', foot)?.remove();
     let tab = $('#hn-tab');
     if (!tab) {
       tab = el('button', { id: 'hn-tab', type: 'button', text: 'HN ⚙' });
@@ -475,6 +476,10 @@
     const pm = cat.personas[o.persona] || {};
     out.push(el('div', {}, el('b', { text: 'Joint Hacker News' }), ' · ' + (pm.title || o.persona)));
     out.push(field('Dock', opt('dock', 'sel', { choices: ['right', 'left', 'top', 'bottom'] }), o.dock));
+    if (has('triage') && o.auto) {
+      out.push(field('Handle requests automatically', opt('auto.on', 'bool'), o.auto.on));
+      out.push(el('div', { class: 'bm-meta', id: 'hn-auto-line', text: 'Spends tokens without asking you each time (at most ' + o.auto.perHour + ' summaries an hour). ' + (S.auto ? S.auto.line : '') }));
+    }
     if (has('triage')) out.push(field('Token use', opt('claude.budget', 'sel', { choices: ['frugal', 'balanced', 'thorough'] }), o.claude.budget));
     if (has('look')) {
       out.push(el('h4', { text: 'Look' }));
@@ -512,7 +517,10 @@
     }
     if (has('opportunities')) out.push(...opportunitiesBlock());
     if (has('bookmarks')) out.push(...bookmarksBlock());
-    if (S.requests > 0) out.push(el('div', { class: 'req', text: S.requests + ' request(s) waiting. Tell Claude: "handle the HN requests".' }));
+    const autoBuilt = !!(S.auto && S.auto.on && S.auto.built.worker && S.auto.built.trigger);
+    if (S.requests > 0 && !autoBuilt) out.push(el('div', { class: 'req', text: S.requests + ' request(s) waiting. Tell Claude: "handle the HN requests".' }));
+    const q = S.queue || [];
+    if (q.length) out.push(el('div', {}, el('a', { id: 'hn-allsum', href: '/joint-summaries', target: '_blank', text: 'Summaries queue (' + q.filter((r) => r.status === 'queued' || r.status === 'processing').length + ' waiting, ' + q.filter((r) => r.status === 'done').length + ' done) →' })));
     return out;
   }
 
@@ -525,7 +533,6 @@
     if (bt) { S.bookmarks = await bridge({ type: 'bookmark', action: 'tags', kind: bt.dataset.bt, id: bt.dataset.bid, tags: bt.value }); apply(); return; }
     const bm = x.closest?.('[data-bmove]');
     if (bm) { S.bookmarks = await bridge({ type: 'bookmark', action: 'move', kind: bm.dataset.bt, id: bm.dataset.bid, group: bm.value }); apply(); return; }
-    if (x.id === 'hn-bsearch') { sessionStorage.setItem('hn-bq', x.value); apply(); return; }
     const t = x.closest?.('[data-opt]'); if (!t) return;
     if (t.dataset.opt === 'claude.budget') { S.options = await bridge({ type: 'budget', name: t.value }); apply(); return; }
     let val;
@@ -550,7 +557,7 @@
     const mb = t.closest?.('.hn-mutebtn');
     if (mb) { S.options = await bridge({ type: 'mute', kind: mb.dataset.kind, value: mb.dataset.value, on: true }); apply(); return; }
     const am = t.closest?.('[data-article]');
-    if (am) { const r = await bridge({ type: 'request', kind: 'article', id: am.dataset.article, url: location.href }); S.requests = r.pending; apply(); return; }
+    if (am) { const r = await bridge({ type: 'request', kind: 'article', id: am.dataset.article, url: location.href, title: (am.closest('tr')?.querySelector('.titleline > a') || document.querySelector('.titleline > a'))?.textContent || '' }); S.requests = r.pending; apply(); return; }
     if (t.closest?.('[data-showmuted]')) { sessionStorage.setItem('hn-showmuted', sessionStorage.getItem('hn-showmuted') === '1' ? '0' : '1'); apply(); return; }
     const del = t.closest?.('[data-bdel]');
     if (del) { S.bookmarks = await bridge({ type: 'bookmark', action: 'remove', kind: del.dataset.bt, id: del.dataset.bid }); apply(); return; }
@@ -572,7 +579,7 @@
       return;
     }
     const ask = t.closest?.('[data-ask]');
-    if (ask) { const r = await bridge({ type: 'request', kind: ask.dataset.ask, url: location.href }); S.requests = r.pending; apply(); return; }
+    if (ask) { const r = await bridge({ type: 'request', kind: ask.dataset.ask, url: location.href, title: document.title }); S.requests = r.pending; apply(); return; }
     const show = t.closest?.('.hn-show');
     if (show) { e.preventDefault(); const tr = document.getElementById(show.dataset.hnId); const open = tr.classList.toggle('hn-open'); show.textContent = open ? 'hide' : 'show'; return; }
     const go = t.closest?.('.hn-goto');

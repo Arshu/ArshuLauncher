@@ -18,6 +18,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { autoPlan, describePlan } from './hn-auto.mjs';
+import { BUILT_KINDS, DEFAULT_MODELS, DEFAULT_TIMEOUT_MS, articlePrompt, flattenThread, parseSummary, parseTldr, runWorker, threadPrompt } from './hn-worker.mjs';
 const nowS = () => Math.floor(Date.now() / 1000);
 const alg = async (q) => {                                       // HN's public Algolia search (read-only), for "worth joining"
   const r = await fetch(`https://hn.algolia.com/api/v1/${q}`, { signal: AbortSignal.timeout(10000) });
@@ -27,7 +29,9 @@ const alg = async (q) => {                                       // HN's public 
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOME = path.join(os.homedir(), '.joint-hackernews');
-const CDP = process.env.JOINT_CDP || 'http://127.0.0.1:9222';
+// the harness this skill lives under (.agents = codex, .pi = pi): the worker and the cost reader use it, so another harness's calls never mix in
+const HARNESS = HERE.includes(`${path.sep}.agents${path.sep}`) ? 'codex' : HERE.includes(`${path.sep}.pi${path.sep}`) ? 'pi' : 'claude';
+const CDP = process.env.JOINT_CDP || `http://127.0.0.1:${process.env.JOINT_CDP_PORT || 9222}`;
 const PLAYWRIGHT_DIR = path.join(os.homedir(), '.joint-browser', 'node');
 const F = { daemon: path.join(HOME, 'daemon.json'), options: path.join(HOME, 'options.json'), ann: path.join(HOME, 'annotations.json'),
   karma: path.join(HOME, 'karma.json'), costBase: path.join(HOME, 'cost-base.json'), bookmarks: path.join(HOME, 'bookmarks.json'), requests: path.join(HOME, 'requests.json'), log: path.join(HOME, 'daemon.log') };
@@ -41,7 +45,20 @@ const USAGE = `Usage: node hn.mjs <command>
   open [url]                 go to an allowed READ-ONLY HN page in the newest tab (default https://news.ycombinator.com/)
   read                       the current HN page as compact JSON (stories, or the thread's comments) for Claude to read
   annotate <file.json>       merge Claude's annotations: {stories:{id:group}, picks:{id:reason}, comments:{id:{label,reason}}, summaries:{itemId:{...}}}
-  requests [--clear]         what the user asked Claude for from the dock (classify, picks, summary, labels, article)
+  requests [--all|--claim|--fail <rid> [why]|--clear|--clear-done]
+                             the persistent queue of what the user asked Claude for from the dock (classify, picks, summary, labels, article).
+                             default: the queued ones; --claim marks them processing (two runs never take the same one) and returns them;
+                             annotate marks them done; --fail marks one failed; --clear drops queued and processing; --clear-done drops the finished
+  watch [--kinds a,b] [--interval s]
+                             runs for ever; one line per queued request (the backlog first, then each new click). For a harness that wakes the agent
+                             on a background process's output (Claude Code's Monitor tool). Reads requests.json only: no daemon call, no claim.
+  wait [--kinds a,b] [--interval s] [--timeout s]
+                             the same scan as a plain blocking command for any harness (codex, pi, Claude): returns when something is queued
+                             (prints it, exit 0) or after --timeout seconds (default 540, exit 3). Then: requests --claim, work, annotate, wait again.
+                             --kinds limits both (article,summary,labels,classify,picks); a request stuck in processing 10 minutes is printed again.
+  auto [on|off|status] [--per-hour n]
+                             handle the queue without being asked (opt-in: it spends tokens): article and summary requests go to a headless worker on the
+                             cheap model, labels/classify/picks wake the harness (PLAN/PLAN_HN_AUTOHANDLE.md). status says what waits and what is not built yet.
   cost                       re-read the AI cost now
   persona [list|choose <id>]  who you are (reader, contributor, maker, researcher): chosen ONCE, then fixed; the dock shows only that persona's sections
   opps [--refresh]           the raw candidate threads behind "worth joining" (the dock scores them with your groups)
@@ -71,6 +88,7 @@ const DEFAULTS = {
   },
   discussion: { indentGuides: true, highlightOp: true, collapseDepth: 0, authorCard: true, repeats: true, labels: 1 },
   claude: { budget: 'balanced', maxComments: 150, commentChars: 350, maxDepth: 3, cheapModel: false },
+  auto: { on: false, perHour: 20, models: { ...DEFAULT_MODELS } },              // handle the request queue without being asked: off until the user turns it on (it spends tokens)
   bookmarks: { path: '' },
   opportunities: { maxComments: 10, maxAgeHours: 6, includeAsk: true },   // "worth joining": early threads with few comments
   persona: 'reader',
@@ -143,14 +161,29 @@ function findCostReader() {
 // `dotnet run` of the reader script rebuilds the exe it caches for that file, which Windows refuses while a copy of it runs (the
 // launcher's cost watcher is one), and the page then shows the cost as unavailable. So the skill runs a reader of its own: the script
 // is copied into a folder of its own and built there once per source (a changed script builds again), and that exe is what runs.
+// The script includes the Core files it needs (#:include ../ArshuCore/X.cs, recursively): they are copied with it, in the same relative places.
+function costSources(script) {
+  const files = new Map();
+  const walk = (f) => {
+    if (files.has(f)) return;
+    const text = fs.readFileSync(f, 'utf8');
+    files.set(f, text);
+    for (const m of text.matchAll(/^#:include\s+(\S+)/gm)) walk(path.resolve(path.dirname(f), m[1]));
+  };
+  walk(path.resolve(script));
+  return files;
+}
+
 async function builtCostReader(script) {
-  const hash = crypto.createHash('sha256').update(fs.readFileSync(script)).digest('hex').slice(0, 12);
+  const sources = costSources(script);
+  const root = [...sources.keys()].map((f) => path.dirname(f)).reduce((a, b) => { while (path.relative(a, b).startsWith('..')) a = path.dirname(a); return a; });
+  const hash = crypto.createHash('sha256').update([...sources].sort(([a], [b]) => (a < b ? -1 : 1)).map(([f, text]) => path.relative(root, f) + '\n' + text).join('\n')).digest('hex').slice(0, 12);
   const dir = path.join(os.tmpdir(), 'joint-cost-reader', `hn-${hash}`);
   const exe = path.join(dir, 'bin', path.basename(script, '.cs') + (process.platform === 'win32' ? '.exe' : ''));
   if (fs.existsSync(exe)) return exe;
   fs.mkdirSync(dir, { recursive: true });
-  const copy = path.join(dir, path.basename(script));
-  fs.copyFileSync(script, copy);
+  for (const [f, text] of sources) { const to = path.join(dir, 'src', path.relative(root, f)); fs.mkdirSync(path.dirname(to), { recursive: true }); fs.writeFileSync(to, text); }
+  const copy = path.join(dir, 'src', path.relative(root, path.resolve(script)));
   await new Promise((resolve, reject) => {
     const p = spawn('dotnet', ['build', copy, '-c', 'Release', '-o', path.join(dir, 'bin')], { windowsHide: true });
     let out = '';
@@ -170,7 +203,38 @@ async function serve() {
 
   let options = merge(clone(DEFAULTS), readJson(F.options, {}));
   let annotations = merge({ stories: {}, comments: {}, summaries: {}, articles: {}, picks: {} }, readJson(F.ann, {}));
-  let requests = readJson(F.requests, []);
+  // the queue is persistent (requests.json): each entry has a rid and a status (queued | processing | done | failed), and
+  // a finished one stays for the summaries page until the user clears it. Old files (no status) count as queued.
+  let requests = readJson(F.requests, []).map((r, i) => ({ rid: r.rid || 'r' + Date.now().toString(36) + i, status: 'queued', ...r }));
+  const saveQueue = () => {
+    if (requests.length > 200) requests = requests.filter((r) => r.status === 'queued' || r.status === 'processing').concat(requests.filter((r) => r.status === 'done' || r.status === 'failed').slice(-100));
+    writeJson(F.requests, requests);
+    setImmediate(() => autoRun().catch((e) => console.error('[hn] auto: ' + e.message)));   // the queue is owned here, so a change is seen without watching the file
+  };
+  const waiting = () => requests.filter((r) => r.status === 'queued');
+  // automatic handling (PLAN/PLAN_HN_AUTOHANDLE.md). The watcher is here; the worker (article, summary) and the trigger (labels, classify, picks) are
+  // built in later steps: until then their entry is null and every status says so, so a request is never reported as handled when nothing handles it.
+  const AUTO_DISPATCH = { worker: null, trigger: null };   // worker is set below the handlers (it annotates through them)
+  const workerStarts = [];
+  let workerBusy = false;                                   // one call at a time: the rest waits queued and is taken on the next tick
+  const autoView = () => {
+    const plan = autoPlan(requests, Date.now(), options.auto, workerStarts);
+    return { on: plan.on, perHour: options.auto.perHour, capLeft: plan.capLeft, line: describePlan(plan, AUTO_DISPATCH), built: { worker: !!AUTO_DISPATCH.worker, trigger: !!AUTO_DISPATCH.trigger } };
+  };
+  let autoLine = '';
+  const autoRun = async () => {
+    const plan = autoPlan(requests, Date.now(), options.auto, workerStarts);
+    if (AUTO_DISPATCH.worker) for (const r of plan.worker) { if (workerBusy) break; if (AUTO_DISPATCH.worker.kinds.includes(r.kind)) AUTO_DISPATCH.worker(r); }
+    if (AUTO_DISPATCH.trigger && plan.trigger.length) await AUTO_DISPATCH.trigger(plan.trigger);
+    const line = describePlan(plan, AUTO_DISPATCH);
+    if (line !== autoLine) { autoLine = line; await push(); }
+  };
+  const itemOf = (u) => { const m = /[?&]id=(\d+)/.exec(String(u || '')); return m ? m[1] : ''; };
+  const finish = (pred, status, why) => {
+    const at = new Date().toISOString(); let n = 0;
+    for (const r of requests) if ((r.status === 'queued' || r.status === 'processing') && pred(r)) { r.status = status; r.doneAt = at; if (why) r.error = why; n++; }
+    return n;
+  };
   let cost = null;
   const karmaCache = readJson(F.karma, {});
 
@@ -288,7 +352,7 @@ async function serve() {
     return { ok: true, claude: options.claude, classifier: options.list.classifier };
   };
   const token = crypto.randomBytes(16).toString('hex');
-  const stateFor = () => ({ options, annotations, cost, requests: requests.length, queuedArticles: requests.filter((r) => r.kind === 'article').map((r) => r.id), bookmarks, catalog: catalogView() });
+  const stateFor = () => ({ options, annotations, cost, requests: waiting().length, auto: autoView(), queuedArticles: requests.filter((r) => r.kind === 'article' && (r.status === 'queued' || r.status === 'processing')).map((r) => r.id), queue: requests.slice(-60), bookmarks, catalog: catalogView() });
   const hnPages = () => ctx.pages().filter((p) => { try { return new URL(p.url()).hostname === 'news.ycombinator.com'; } catch { return false; } });
   const push = async () => { const st = stateFor(); await Promise.all(hnPages().map((p) => p.evaluate((s) => window.__hnApply && window.__hnApply(s), st).catch(() => {}))); };
 
@@ -328,11 +392,12 @@ async function serve() {
     const done = (c) => { costBusy = false; cost = c; push().finally(resolve); };
     if (!reader) return done({ error: 'runJointCostAST.cs not found (set HN_COST_READER)' });
     // this skill's own harness (the folder it lives in), so another harness's old sessions cannot break the number
-    const harness = HERE.includes(`${path.sep}.agents${path.sep}`) ? 'codex' : HERE.includes(`${path.sep}.pi${path.sep}`) ? 'pi' : 'claude';
-    const readerArgs = ['--folder', process.cwd(), '--harness', harness, '--json', '--no-snapshot'];
+    const readerArgs = ['--folder', process.cwd(), '--harness', HARNESS, '--json', '--no-snapshot'];
     const script = /\.cs$/i.test(reader);   // the script is built once into a folder of its own (builtCostReader); a tool binary carries the reader behind --cost
     (script ? builtCostReader(reader) : Promise.resolve(reader)).then((exe) => {
-    const p = spawn(exe, script ? readerArgs : ['--cost', ...readerArgs], { windowsHide: true });
+    // the standalone runJointCostAST binary takes the arguments directly; only a tool binary carries the reader behind --cost
+    const standalone = /^runJointCostAST(\.exe)?$/i.test(path.basename(reader));
+    const p = spawn(exe, script || standalone ? readerArgs : ['--cost', ...readerArgs], { windowsHide: true });
     let out = '', err = '';
     const timer = setTimeout(() => p.kill(), 120000);
     p.stdout.on('data', (d) => (out += d)); p.stderr.on('data', (d) => (err += d));
@@ -435,7 +500,7 @@ async function serve() {
     if (m.type === 'addGroup') { const r = groupCmd({ action: 'add', name: m.name, keywords: m.keywords }); if (!r.ok) throw new Error(r.error); return options; }
     if (m.type === 'mute') {
       const k = { domain: 'domains', user: 'users', word: 'words' }[m.kind], v = String(m.value || '').trim().toLowerCase();
-      if (!k || !/^[\w.@+ -]{1,60}$/.test(v)) throw new Error('bad mute');
+      if (!k || !/^[\w.@+ \/-]{1,60}$/.test(v)) throw new Error('bad mute');   // a domain may carry a path (github.com/user), as HN shows it
       const a = options.list.mute[k], i = a.indexOf(v);
       if (m.on === false) { if (i >= 0) a.splice(i, 1); } else if (i < 0) a.push(v);
       writeJson(F.options, options); push();
@@ -444,19 +509,36 @@ async function serve() {
     if (m.type === 'request') {
       if (!['classify', 'summary', 'labels', 'article', 'picks'].includes(m.kind)) throw new Error('unknown request');
       if (m.kind === 'article' && !/^\d+$/.test(String(m.id))) throw new Error('bad story id');
-      requests.push({ kind: m.kind, id: m.kind === 'article' ? String(m.id) : undefined, url: String(m.url || ''), at: new Date().toISOString() });
-      writeJson(F.requests, requests);
+      const url = String(m.url || ''), id = m.kind === 'article' ? String(m.id) : undefined, item = m.kind === 'summary' || m.kind === 'labels' ? itemOf(url) : '';
+      const same = requests.find((r) => (r.status === 'queued' || r.status === 'processing') && r.kind === m.kind && (r.id || '') === (id || '') && (m.kind === 'article' || itemOf(r.url) === item));
+      if (!same) {
+        requests.push({ rid: 'r' + Date.now().toString(36) + crypto.randomBytes(2).toString('hex'), status: 'queued', kind: m.kind, id, url, title: String(m.title || '').slice(0, 160), at: new Date().toISOString() });
+        saveQueue();
+      }
       push();
-      return { pending: requests.length };
+      return { pending: waiting().length };
+    }
+    if (m.type === 'queue') {               // the summaries page: remove one entry, put a failed one back, or clear the finished ones
+      if (m.action === 'remove') requests = requests.filter((r) => r.rid !== String(m.rid));
+      else if (m.action === 'clearDone') requests = requests.filter((r) => r.status === 'queued' || r.status === 'processing');
+      else if (m.action === 'requeue') { for (const r of requests) if (r.rid === String(m.rid) && (r.status === 'failed' || r.status === 'processing')) { r.status = 'queued'; delete r.error; delete r.doneAt; } }
+      else throw new Error('unknown queue action');
+      saveQueue(); push();
+      return { queue: requests.slice(-60), annotations };
     }
     throw new Error('unknown bridge message');
   });
   await ctx.addInitScript({ content: fs.readFileSync(path.join(HERE, 'hn-inject.js'), 'utf8') });
+  // the bookmarks page: one URL on the HN origin (so the bridge and the dock's link work) answered here from hn-bookmarks.html, never sent to HN
+  await ctx.route((u) => u.hostname === 'news.ycombinator.com' && u.pathname === '/joint-summaries',
+    (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(HERE, 'hn-summaries.html'), 'utf8') }));
+  await ctx.route((u) => u.hostname === 'news.ycombinator.com' && u.pathname === '/joint-bookmarks',
+    (route) => route.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: fs.readFileSync(path.join(HERE, 'hn-bookmarks.html'), 'utf8') }));
   await Promise.all(hnPages().map((p) => p.reload().catch(() => {})));   // existing HN tabs get the script
 
   const newestHn = () => { const l = hnPages(); return l[l.length - 1]; };
   const handlers = {
-    status: async () => ({ ok: true, pid: process.pid, cdp: CDP, pages: hnPages().map((p) => p.url()), pendingRequests: requests.length, cost, optionsFile: F.options }),
+    status: async () => ({ ok: true, pid: process.pid, cdp: CDP, pages: hnPages().map((p) => p.url()), pendingRequests: waiting().length, cost, optionsFile: F.options }),
     get: async (m) => ({ ok: true, value: m.path ? m.path.split('.').reduce((a, k) => (a == null ? a : a[k]), options) : options }),
     set: async (m) => { setPath(options, m.path, m.value); writeJson(F.options, options); await push(); return { ok: true, path: m.path, value: m.value }; },
     reset: async () => { options = clone(DEFAULTS); writeJson(F.options, options); await push(); return { ok: true }; },
@@ -495,11 +577,38 @@ async function serve() {
         };
         n++;
       }
-      writeJson(F.ann, annotations); requests = []; writeJson(F.requests, requests);
+      writeJson(F.ann, annotations);
+      // what was answered is done (it stays in the queue for the summaries page); an unanswered one stays queued
+      const had = (o) => (o ? Object.keys(o) : []);
+      let done = 0;
+      done += finish((r) => r.kind === 'article' && had(a.articles).includes(r.id), 'done');
+      done += finish((r) => (r.kind === 'summary' && had(a.summaries).includes(itemOf(r.url))) || (r.kind === 'labels' && had(a.comments).length > 0), 'done');
+      done += finish((r) => (r.kind === 'classify' && had(a.stories).length > 0) || (r.kind === 'picks' && !!a.picks), 'done');
+      saveQueue();
       await push();
-      return { ok: true, merged: n };
+      return { ok: true, merged: n, doneRequests: done };
     },
-    requests: async (m) => { const r = requests; if (m.clear) { requests = []; writeJson(F.requests, requests); await push(); } return { ok: true, requests: r }; },
+    auto: async (m) => {
+      if (!['on', 'off', 'status'].includes(m.action)) return { ok: false, error: 'auto on|off|status [--per-hour n]' };
+      if (m.perHour !== undefined) {
+        const n = Number(m.perHour);
+        if (!Number.isInteger(n) || n < 0 || n > 1000) return { ok: false, error: '--per-hour is a whole number from 0 to 1000' };
+        options.auto.perHour = n;
+      }
+      if (m.action !== 'status') options.auto.on = m.action === 'on';
+      if (m.action !== 'status' || m.perHour !== undefined) writeJson(F.options, options);
+      await autoRun();
+      await push();
+      return { ok: true, ...autoView() };
+    },
+    requests: async (m) => {
+      if (m.fail) { const n = finish((r) => r.rid === String(m.fail), 'failed', String(m.why || 'failed').slice(0, 200)); saveQueue(); await push(); return { ok: n > 0, failed: n }; }
+      if (m.clear) { requests = requests.filter((r) => r.status === 'done' || r.status === 'failed'); saveQueue(); await push(); return { ok: true, requests: [] }; }
+      if (m.clearDone) { requests = requests.filter((r) => r.status === 'queued' || r.status === 'processing'); saveQueue(); await push(); return { ok: true, requests: waiting() }; }
+      const out = m.all ? requests : waiting();
+      if (m.claim) { const at = new Date().toISOString(); for (const r of out) { r.status = 'processing'; r.claimedAt = at; } saveQueue(); await push(); }
+      return { ok: true, requests: out };
+    },
     group: async (m) => groupCmd(m),
     budget: async (m) => applyBudget(m.name),
     persona: async (m) => {
@@ -513,6 +622,40 @@ async function serve() {
     cost: async () => { await readCost(); return { ok: true, cost }; },
     stop: async () => { setTimeout(shutdown, 100); return { ok: true }; },
   };
+
+  // The worker (PLAN_HN_AUTOHANDLE.md step 2): the daemon fetches the page text, one tool-less call of this skill's harness turns it into JSON, the daemon
+  // validates it and annotates. A failure marks the request failed with the cause; it never marks it done.
+  AUTO_DISPATCH.worker = (r) => {
+    workerBusy = true; workerStarts.push(Date.now());
+    r.status = 'processing'; r.claimedAt = new Date().toISOString(); saveQueue();
+    (async () => {
+      try {
+        const call = (prompt) => runWorker({ harness: HARNESS, model: options.auto.models[HARNESS] || '', prompt, cwd: process.cwd(), timeoutMs: DEFAULT_TIMEOUT_MS });
+        let data;
+        if (r.kind === 'summary') {
+          const id = itemOf(r.url);
+          if (!id) throw new Error('summary: the request has no discussion id');
+          const reply = await fetch(`https://hn.algolia.com/api/v1/items/${id}`, { signal: AbortSignal.timeout(15000) });
+          if (!reply.ok) throw new Error(`summary: Algolia answered ${reply.status}`);
+          const thread = flattenThread(await reply.json(), options.claude);
+          if (thread.included === 0) throw new Error('summary: the thread has no comments to summarise');
+          const s = parseSummary(await call(threadPrompt(thread)), new Set(thread.comments.map((c) => c.id)));
+          data = { summaries: { [thread.id]: { ...s, covered: thread.included, total: thread.total } } };
+        } else {
+          const art = await fetchArticle(r.id);
+          if (!art.ok) throw new Error('article: ' + art.error);
+          data = { articles: { [art.id]: { tldr: parseTldr(await call(articlePrompt(art))), minutes: art.minutes } } };
+        }
+        const res = await handlers.annotate({ data });
+        if (!res.doneRequests) throw new Error('the annotation was kept but the request did not close');
+      } catch (e) {
+        finish((x) => x.rid === r.rid, 'failed', 'worker: ' + String(e.message).slice(0, 190));
+        saveQueue(); await push();
+        console.error(`[hn] worker failed for ${r.rid}: ${e.message}`);
+      } finally { workerBusy = false; }
+    })();
+  };
+  AUTO_DISPATCH.worker.kinds = BUILT_KINDS;
 
   const server = http.createServer((req, res) => {
     let body = '';
@@ -535,6 +678,7 @@ async function serve() {
   browser.on('disconnected', () => { console.log('[hn] browser closed'); shutdown(); });
   process.on('SIGINT', shutdown); process.on('SIGTERM', shutdown);
   readCost(); setInterval(readCost, 60000);
+  setInterval(() => autoRun().catch((e) => console.error('[hn] auto: ' + e.message)), 5000);   // a stuck claim and the hourly cap expire with the clock, not with a write
   await push();
 }
 
@@ -595,7 +739,33 @@ try {
   else if (cmd === 'open') print(await call({ cmd: 'open', url: rest[0] }));
   else if (cmd === 'read') { const r = await call({ cmd: 'read' }); console.log(JSON.stringify(r)); process.exitCode = r.ok === false ? 1 : 0; }   // compact: Claude pays for every token
   else if (cmd === 'annotate') { if (!rest[0]) throw new Error('annotate <file.json>'); print(await call({ cmd: 'annotate', data: JSON.parse(fs.readFileSync(rest[0], 'utf8')) })); }
-  else if (cmd === 'requests') print(await call({ cmd: 'requests', clear: rest.includes('--clear') }));
+  else if (cmd === 'watch' || cmd === 'wait') {
+    // Phase 2, two shapes of the same scan of requests.json (no daemon call, no claim, nothing written):
+    //  watch: runs for ever, one stdout line per queued request. For a harness that turns a background process's output into a wake-up (Claude Code's Monitor tool).
+    //  wait:  blocks until a request is queued, prints it/them, exits 0; exits 3 after --timeout seconds with none. For any harness that can run a shell command (codex, pi, Claude).
+    const val = (f, d) => { const i = rest.indexOf(f); return i >= 0 && rest[i + 1] ? rest[i + 1] : d; };
+    const kinds = new Set(String(val('--kinds', 'article,summary,labels,classify,picks')).split(',').map((k) => k.trim()).filter(Boolean));
+    const every = Math.max(2, Number(val('--interval', 5)) || 5) * 1000;
+    const until = cmd === 'wait' ? Date.now() + Math.max(5, Number(val('--timeout', 540)) || 540) * 1000 : Infinity;
+    const told = new Set();
+    for (;;) {
+      let found = 0;
+      const q = readJson(F.requests, []);
+      for (const r of Array.isArray(q) ? q : []) {
+        const stuck = r.status === 'processing' && r.claimedAt && Date.now() - Date.parse(r.claimedAt) > 600000;
+        const key = r.rid + (stuck ? ':stuck' : '');
+        if ((r.status === 'queued' || stuck) && kinds.has(r.kind) && !told.has(key)) {
+          told.add(key); found++;
+          console.log(`hn-request ${r.rid} ${r.kind}${stuck ? ' (stuck in processing)' : ''} ${r.id || r.url || ''} ${String(r.title || '').replace(/\s+/g, ' ').slice(0, 80)}`.trim());
+        }
+      }
+      if (cmd === 'wait' && found) break;
+      if (Date.now() >= until) { console.log('hn-wait: no request within the timeout'); process.exitCode = 3; break; }
+      await new Promise((res) => setTimeout(res, every));
+    }
+  }
+  else if (cmd === 'requests') { const fi = rest.indexOf('--fail'); print(await call({ cmd: 'requests', all: rest.includes('--all'), claim: rest.includes('--claim'), clear: rest.includes('--clear'), clearDone: rest.includes('--clear-done'), fail: fi >= 0 ? rest[fi + 1] : undefined, why: fi >= 0 ? rest.slice(fi + 2).join(' ') : undefined })); }
+  else if (cmd === 'auto') { const [action = 'status'] = rest; const pi = rest.indexOf('--per-hour'); const r = await call({ cmd: 'auto', action, perHour: pi >= 0 ? rest[pi + 1] : undefined }); print(r); process.exitCode = r.ok === false ? 1 : 0; }
   else if (cmd === 'cost') print(await call({ cmd: 'cost' }));
   else if (cmd === 'budget') print(await call({ cmd: 'budget', name: rest[0] }));
   else if (cmd === 'persona') { const [action = 'list', a] = rest; print(await call({ cmd: 'persona', action, name: a })); }
