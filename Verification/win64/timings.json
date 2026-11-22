@@ -1,0 +1,296 @@
+{
+  "claude": {
+    "T1": {
+      "seconds": 40.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T2": {
+      "seconds": 40.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T3": {
+      "seconds": 44.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T4": {
+      "seconds": 58.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T5": {
+      "seconds": 34.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T6": {
+      "seconds": 22.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T7": {
+      "seconds": 27.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T8": {
+      "seconds": 96.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T9": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T10": {
+      "seconds": 12.3,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T11": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T12": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T13": {
+      "seconds": 13.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HN": {
+      "seconds": 389.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNA": {
+      "seconds": 153.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNC": {
+      "seconds": 48.5,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    }
+  },
+  "codex": {
+    "T1": {
+      "seconds": 31.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T2": {
+      "seconds": 66.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T3": {
+      "seconds": 50.4,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T4": {
+      "seconds": 62.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T5": {
+      "seconds": 33.4,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T6": {
+      "seconds": 30.3,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T7": {
+      "seconds": 28.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T8": {
+      "seconds": 109.3,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T9": {
+      "seconds": 11.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T10": {
+      "seconds": 12.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T11": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T12": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T13": {
+      "seconds": 13.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HN": {
+      "seconds": 340.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNA": {
+      "seconds": 198.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNC": {
+      "seconds": 73.6,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    }
+  },
+  "pi": {
+    "T1": {
+      "seconds": 22.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T2": {
+      "seconds": 46.5,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T3": {
+      "seconds": 39.6,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T4": {
+      "seconds": 49.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T5": {
+      "seconds": 30.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T6": {
+      "seconds": 20.6,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T7": {
+      "seconds": 20.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T8": {
+      "seconds": 40.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T9": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T10": {
+      "seconds": 12.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T11": {
+      "seconds": 10.9,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T12": {
+      "seconds": 11.0,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "T13": {
+      "seconds": 12.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HN": {
+      "seconds": 448.5,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNA": {
+      "seconds": 142.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    },
+    "HNC": {
+      "seconds": 38.4,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "DESKTOP-QFJ19UG"
+    }
+  }
+}

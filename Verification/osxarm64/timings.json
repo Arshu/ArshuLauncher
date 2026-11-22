@@ -1,0 +1,80 @@
+{
+  "claude": {
+    "T5": {
+      "seconds": 84.6,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HN": {
+      "seconds": 334.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNA": {
+      "seconds": 188.7,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNC": {
+      "seconds": 66.3,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    }
+  },
+  "codex": {
+    "T5": {
+      "seconds": 47.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HN": {
+      "seconds": 174.0,
+      "pass": false,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNA": {
+      "seconds": 175.1,
+      "pass": false,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNC": {
+      "seconds": 95.8,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    }
+  },
+  "pi": {
+    "T5": {
+      "seconds": 40.5,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HN": {
+      "seconds": 362.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNA": {
+      "seconds": 172.2,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    },
+    "HNC": {
+      "seconds": 54.1,
+      "pass": true,
+      "date": "2026-11-20",
+      "host": "mini"
+    }
+  }
+}
